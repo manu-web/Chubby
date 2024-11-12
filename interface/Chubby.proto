@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package kvstore;
+
+service KVStore {
+    rpc Put(PutRequest) returns (PutResponse);
+    rpc Get(GetRequest) returns (GetReponse);
+    rpc RestoreServer(RestoreServerRequest) returns (RestoreServerResponse);
+    rpc Replicate(ReplicateRequest) returns (Empty);
+    rpc Die(DieRequest) returns (Empty);
+    rpc Heartbeat(HeartbeatMessage) returns (Empty);
+    rpc Restart(Empty) returns (Empty);
+    rpc Leave(LeaveRequest) returns (Empty);
+}
+
+message PutRequest {
+    string key = 1;
+    string value = 2;
+    uint64 timestamp = 3;
+    bool is_client_request = 4;
+}
+
+message GetRequest {
+    string key = 1;
+    bool is_client_request = 2;
+}
+
+message GetReponse {
+    string value = 1;
+    uint64 timestamp = 2;
+    uint32 code = 3;
+}
+
+message PutResponse {
+    string message = 1;
+    uint64 timestamp = 2;
+    uint32 code = 3;
+}
+
+message KeyValuePair {
+    string key = 1;
+    string value = 2;
+}
+
+message RestoreServerRequest {
+    uint64 timestamp = 1;
+}
+
+message RestoreServerResponse {
+    repeated KeyValuePair repair_list = 1;
+}
+
+message ReplicateRequest {
+    string key = 1;
+    string value = 2;
+    uint64 timestamp = 3;
+    bool async_forward_to_all = 4;
+}
+
+message DieRequest {
+    bool clean = 1;
+}
+
+message LeaveRequest {
+    bool clean = 1;
+}
+
+message HeartbeatMessage {
+    bool is_new = 1;
+    uint32 server_port = 2;
+}
+
+message Empty {
+}
