@@ -8,16 +8,17 @@ service Paxos {
 }
 
 message PaxosProposeRequest {
-    uint64 proposal_id = 1;
+    uint64 proposal_number = 1;
 }
 
 message PaxosProposeResponse {
-    uint64 higher_proposal = 1;
+    uint64 last_accepted_proposal = 1;
     string last_accepted_value = 2;
+    bool is_proposal_accepted = 3;
 }
 
 message PaxosAcceptRequest {
-    uint64 proposal_id = 1;
+    uint64 proposal_number = 1;
     uint64 log_index = 2;
     string value = 3;
 }
