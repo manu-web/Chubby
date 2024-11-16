@@ -5,10 +5,12 @@ package paxos;
 service Paxos {
     rpc Propose(PaxosProposeRequest) returns (PaxosProposeResponse);
     rpc Accept(PaxosAcceptRequest) returns (PaxosAcceptResponse);
+    rpc Write(WriteRequest) returns (WriteResponse);
 }
 
 message PaxosProposeRequest {
     uint64 proposal_number = 1;
+    uint64 log_index = 2;
 }
 
 message PaxosProposeResponse {
@@ -25,4 +27,13 @@ message PaxosAcceptRequest {
 
 message PaxosAcceptResponse {
     bool is_accepted = 1;
+}
+
+message WriteRequest {
+    string key = 1;
+    string value = 2;
+}
+
+message WriteResponse {
+    string response = 1;
 }

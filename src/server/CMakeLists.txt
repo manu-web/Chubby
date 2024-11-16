@@ -13,7 +13,7 @@ include_directories(${ROCKSDB_INCLUDE_DIR})
 
 # add_library(keyValueStoreLib keyValueStore.cpp)
 
-add_executable(kvstore_server server.cpp)
+add_executable(kvstore_server server.cpp thread_pool.cc rocksdb_wrapper.cc)
     target_link_libraries(kvstore_server
 	    # keyValueStoreLib
         Chubby_proto_grpc
@@ -21,4 +21,4 @@ add_executable(kvstore_server server.cpp)
         ${_PROTOBUF_LIBPROTOBUF}
         ${_REFLECTION}
         ${_GRPC_GRPCPP}
-        ${ROCKSDB_LIBRARY})
+        ${ROCKSDB_LIBRARY}) 
