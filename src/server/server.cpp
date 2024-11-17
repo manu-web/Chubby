@@ -24,6 +24,7 @@ using grpc::Status;
 
 using paxos::Empty;
 using paxos::HeartbeatRequest;
+using paxos::HeartbeatResponse;
 using paxos::Paxos;
 using paxos::PaxosAcceptRequest;
 using paxos::PaxosAcceptResponse;
@@ -75,7 +76,7 @@ private:
     this->last_port = 50051 + group_size - 1;
     this->server_address = server_address;
     this->self_port = getPortNumber(server_address);
-    this->self_index = 1;
+    this->self_index = self_port % group_size;
     InitializeServerStubs();
   }
 
@@ -228,12 +229,29 @@ private:
   }
 
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
-                   Empty *response) override {
+                   HeartbeatResponse *response) override {
+    std::lock_guard<std::mutex> lock(leader_mutex);
+    if (self_index == request->server_index()) {
+      missed_heartbeats = 0;
+      return Status::OK;
+    }
+
+    if (view_number = request->view()) {
+      return grpc::Status(grpc::StatusCode::ABORTED,
+                          "your view is lower than mine");
+    }
+
+    if (impl.View < args.View) {
+      view_number = request->view();
+      leader_dead = false;
+      missed_heartbeats = 0;
+    }
+
     return Status::OK;
   }
 
   void SendHeartbeats() {
-    if (max_proposal_number_seen_so_far % group_size == self_index)
+    if (view_number % group_size == self_index) {
       for (const auto &pair : paxos_stubs_map) {
         std::cout << pair.first << std::endl;
         HeartbeatRequest message;
@@ -242,6 +260,7 @@ private:
         // message.set_server_id(server_address);
         pair.second->Heartbeat(&context, message, &response);
       }
+    }
   }
 
   void DetectLeaderFailure() {
@@ -249,14 +268,13 @@ private:
     missed_heartbeats++;
 
     if (missed_heartbeats > 3) {
-      int mod = max_proposal_number_seen_so_far % group_size;
+      int mod = view_number % group_size;
 
       if (mod < self_index) {
-        std::thread(&PaxosImpl::Election, this, max_proposal_number_seen_so_far,
-                    self_index - mod)
+        std::thread(&PaxosImpl::Election, this, view_number, self_index - mod)
             .detach();
       } else if (mod > self_index) {
-        std::thread(&PaxosImpl::Election, this, max_proposal_number_seen_so_far,
+        std::thread(&PaxosImpl::Election, this, view_number,
                     self_index + group_size - mod)
             .detach();
       }

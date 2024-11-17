@@ -40,8 +40,22 @@ message WriteResponse {
 }
 
 message HeartbeatRequest {
-    uint64 server_id = 1;
-    uint64 term = 2;
+    uint64 server_index = 1;
+    uint64 view = 2;
+    repeated uint64 done = 3;
+    map<uint64, PaxosSlot> slots = 4;
+}
+
+message HeartbeatResponse {
+    string status = 1;
+    map<uint64, PaxosSlot> slots = 2;
+}
+
+message PaxosSlot {
+    int n_p;
+    int n_a;
+    std::string v_a;
+    int status;
 }
 
 message Empty{}
