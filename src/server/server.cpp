@@ -29,6 +29,8 @@ using paxos::PaxosAcceptRequest;
 using paxos::PaxosAcceptResponse;
 using paxos::WriteRequest;
 using paxos::WriteResponse;
+using paxos::HeartbeatRequest;
+using paxos::Empty;
 
 enum ConsensusStatus {DECIDED,NOT_DECIDED};
 
@@ -41,20 +43,28 @@ struct PaxosSlot{
 
 class PaxosImpl final : public Paxos::Service {
 private:
+  bool leader_dead;
   int group_size;
   int max_proposal_number_seen_so_far;
   int highest_log_idx;
   int max_accept_retries = 3;
   int first_port;
   int last_port;
+  int self_port;
+  int self_index;
+  int missed_heartbeats;
   std::string server_address;
+  std::string master_address;
   std::mutex log_mutex;
+  std::mutex leader_mutex;
   std::map<int,PaxosSlot> log;
   ThreadPool accept_thread_pool; //Should be formed conditionally if the current server is a master
   RocksDBWrapper rocks_db_wrapper;
   std::map<std::string, std::unique_ptr<Paxos::Stub>> paxos_stubs_map;
 
-  PaxosImpl(int group_size,std::string db_path,size_t cache_size,int server_address) //This is the rocksDB cache size
+  int getPortNumber(const std::string &address);
+
+  PaxosImpl(int group_size,std::string db_path,size_t cache_size,std::string server_address) //This is the rocksDB cache size
       : accept_thread_pool(8),
         rocks_db_wrapper(db_path,cache_size)
   {
@@ -63,6 +73,8 @@ private:
       this->first_port = 50051;
       this->last_port = 50051 + group_size - 1;
       this->server_address = server_address;
+      this->self_port = getPortNumber(server_address);
+      this->self_index = 1;
       InitializeServerStubs();
   }
 
@@ -203,7 +215,53 @@ private:
 
     return Status::OK;
   }
+  
+  Status Heartbeat(ServerContext *context, const HeartbeatRequest *request, Empty *response) override {
+    return Status::OK;
+  }
+
+  void SendHeartbeats() {
+    if (max_proposal_number_seen_so_far % group_size == self_index)
+    for (const auto &pair : paxos_stubs_map) {
+      std::cout << pair.first << std::endl;
+      HeartbeatRequest message;
+      ClientContext context;
+      Empty response;
+      // message.set_server_id(server_address);
+      pair.second->Heartbeat(&context, message, &response);
+    }
+  }
+
+  void DetectLeaderFailure() {
+    std::lock_guard<std::mutex> lock(leader_mutex);
+    missed_heartbeats++;
+
+    if (missed_heartbeats > 3) {
+        int mod = max_proposal_number_seen_so_far % group_size;
+
+        if (mod < self_index) {
+            std::thread(&PaxosImpl::Election, this, max_proposal_number_seen_so_far, self_index - mod).detach();
+        } else if (mod > self_index) {
+            std::thread(&PaxosImpl::Election, this, max_proposal_number_seen_so_far, self_index + group_size - mod).detach();
+        }
+
+        missed_heartbeats = 0;
+        leader_dead = true;
+    }
+  }
+
+  void Election(int max_proposal, int offset) {
+  }
 };
+
+int getPortNumber(const std::string &address) {
+  size_t colon_pos = address.find(':');
+  if (colon_pos == std::string::npos) {
+    throw std::invalid_argument("Invalid address format.");
+  }
+
+  return std::stoi(address.substr(colon_pos + 1));
+}
 
 int main(int argc, char **argv) {
   return 0;

@@ -6,6 +6,7 @@ service Paxos {
     rpc Propose(PaxosProposeRequest) returns (PaxosProposeResponse);
     rpc Accept(PaxosAcceptRequest) returns (PaxosAcceptResponse);
     rpc Write(WriteRequest) returns (WriteResponse);
+    rpc Heartbeat(HeartbeatRequest) returns (Empty);
 }
 
 message PaxosProposeRequest {
@@ -37,3 +38,10 @@ message WriteRequest {
 message WriteResponse {
     string response = 1;
 }
+
+message HeartbeatRequest {
+    uint64 server_id = 1;
+    uint64 term = 2;
+}
+
+message Empty{}
