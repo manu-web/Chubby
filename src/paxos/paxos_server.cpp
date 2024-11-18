@@ -33,7 +33,7 @@ using paxos::Paxos;
 using paxos::PrepareRequest;
 using paxos::PrepareResponse;
 
-enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN};
+enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN };
 
 struct PaxosSlot {
   int64_t n;         // Proposal number
@@ -45,6 +45,16 @@ struct PaxosSlot {
   std::mutex mu_;
   std::string value; // Proposed value
   ConsensusStatus status;
+
+  void ToProtobuf(paxos::PaxosSlot *protoPaxosSlot) const {
+    protoPaxosSlot->set_n(n);
+    protoPaxosSlot->set_n_p(n_p);
+    protoPaxosSlot->set_n_a(n_a);
+    protoPaxosSlot->set_v_a(v_a);
+    protoPaxosSlot->set_highest_n(highest_N);
+    protoPaxosSlot->set_value(value);
+    protoPaxosSlot->set_status(static_cast<int>(status));
+  }
 };
 
 class PaxosImpl final : public Paxos::Service {
@@ -62,6 +72,7 @@ private:
   int me;
   ////////////////////////////////////////////
 
+  bool leader_dead;
   int group_size;
   int max_proposal_number_seen_so_far;
   int highest_log_idx;
@@ -71,7 +82,6 @@ private:
   int self_port;
   int self_index;
   int missed_heartbeats;
-  int view_number;
   int highest_accepted_seq;
   int leader_dead;
   int num_servers;
@@ -138,6 +148,19 @@ private:
     return slot;
   }
 
+  PaxosSlot *fillSlot(paxos::PaxosSlot rpc_slot) {
+    PaxosSlot *slot;
+    slot->n = rpc_slot.n();
+    slot->n_p = rpc_slot.n_p();
+    slot->n_a = rpc_slot.n_a();
+    slot->v_a = rpc_slot.v_a();
+    slot->highest_N = rpc_slot.highest_n();
+    slot->value = rpc_slot.value();
+    slot->status = static_cast<ConsensusStatus>(rpc_slot.status());
+
+    return slot;
+  }
+
   PaxosSlot *addSlots(int seq) {
     if (slots.find(seq) != slots.end()) {
       slots[seq] = initSlot(view);
@@ -187,8 +210,8 @@ private:
     }
     response->set_latest_done(done[me]);
     PaxosSlot *slot = addSlots(request->seq());
-    if(request->view() > view_number){
-      view_number = request->view();
+    if (request->view() > view) {
+      view = request->view();
       leader_dead = false;
       missed_heartbeats = 0;
     }
@@ -197,22 +220,22 @@ private:
     response->set_view(slot->n_a);
     response->set_value(slot->v_a);
 
-    if(request->view() >= slot->n_a){
+    if (request->view() >= slot->n_a) {
       slot->n_a = request->view();
       slot->v_a = request->value();
       response->set_status("OK");
       accept_lock.lock();
-      if(request->seq() > highest_accepted_seq){
+      if (request->seq() > highest_accepted_seq) {
         highest_accepted_seq = request->seq();
       }
       accept_lock.unlock();
-    }else{
-      response->set_status("REJECT");   
+    } else {
+      response->set_status("REJECT");
     }
 
-    if(slot->status == DECIDED){
+    if (slot->status == DECIDED) {
       response->set_value(slot->value);
-    }else{
+    } else {
       response->set_value(nullptr);
     }
 
@@ -351,7 +374,7 @@ private:
 
   // bool send_propose(std::string server_address, int log_index,
   //                   std::string value) {
-  //   if (view_number % group_size == self_index) { // if its a master
+  //   if (view % group_size == self_index) { // if its a master
   //     for (int port = first_port; port <= last_port; port++) {
   //       std::string server_address =
   //           std::string("127.0.0.1:") + std::to_string(port);
@@ -396,24 +419,63 @@ private:
   //   return false;
   // }
 
-
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
                    HeartbeatResponse *response) override {
     std::lock_guard<std::mutex> lock(leader_mutex);
-    if (self_index == request->id()) {
+    if (me == request->id()) {
       missed_heartbeats = 0;
       return Status::OK;
     }
 
-    if (view_number >= request->view()) {
+    if (view > request->view()) {
       return grpc::Status(grpc::StatusCode::ABORTED,
                           "your view is lower than mine");
     }
 
-    if (view_number < request->view()) {
-      view_number = request->view();
+    if (view < request->view()) {
+      view = request->view();
       leader_dead = false;
       missed_heartbeats = 0;
+    }
+
+    std::vector<int> done_vec(request->done().begin(), request->done().end());
+    done.assign(done_vec.begin(), done_vec.end());
+    missed_heartbeats = 0;
+
+    std::map<int, PaxosSlot *> request_slots;
+
+    for (const auto &pair : request->slots()) {
+      const paxos::PaxosSlot &slot = pair.second;
+      request_slots[pair.first] = fillSlot(slot);
+    }
+
+    std::map<int, PaxosSlot *> reply_slots;
+
+    for (const auto &pair : slots) {
+      if (pair.second->status == ConsensusStatus::DECIDED) {
+        if (request_slots.find(pair.first) == request_slots.end()) {
+          auto decided_value = pair.second->value;
+          auto newSlot = initSlot(view);
+          newSlot->value = decided_value;
+          newSlot->status = ConsensusStatus::DECIDED;
+          reply_slots[pair.first] = newSlot;
+        }
+      }
+    }
+
+    for (const auto &pair : request_slots) {
+      auto new_slot = addSlots(pair.first);
+      std::lock_guard<std::mutex> lock(new_slot->mu_);
+      if (new_slot->status != ConsensusStatus::DECIDED) {
+        new_slot->status = ConsensusStatus::DECIDED;
+        new_slot->value = pair.second->value;
+      }
+    }
+
+    for (const auto &pair : reply_slots) {
+      paxos::PaxosSlot protobufSlot;
+      pair.second->ToProtobuf(&protobufSlot);
+      (*response->mutable_slots())[pair.first] = protobufSlot;
     }
 
     return Status::OK;
@@ -429,7 +491,7 @@ private:
   }
 
   void SendHeartbeats() {
-    if (view_number % group_size == self_index) {
+    if (view % group_size == self_index) {
       for (const auto &pair : paxos_stubs_map) {
         std::cout << pair.first << std::endl;
         HeartbeatRequest message;
@@ -446,13 +508,13 @@ private:
     missed_heartbeats++;
 
     if (missed_heartbeats > 3) {
-      int mod = view_number % group_size;
+      int mod = view % group_size;
 
       if (mod < self_index) {
-        std::thread(&PaxosImpl::Election, this, view_number, self_index - mod)
+        std::thread(&PaxosImpl::Election, this, view, self_index - mod)
             .detach();
       } else if (mod > self_index) {
-        std::thread(&PaxosImpl::Election, this, view_number,
+        std::thread(&PaxosImpl::Election, this, view,
                     self_index + group_size - mod)
             .detach();
       }

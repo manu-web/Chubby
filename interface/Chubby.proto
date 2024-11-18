@@ -87,10 +87,13 @@ message HeartbeatResponse {
 }
 
 message PaxosSlot {
-    int64 n_p = 1;           // Proposal number
-    int64 n_a = 2;           // Accepted proposal number
-    string v_a = 3;          // Accepted value
-    int32 status = 4;        // Slot status
+  int64 n = 1;            // Proposal number
+  int64 n_p = 2;          // Prepared proposal number
+  int64 n_a = 3;          // Accepted proposal number
+  string v_a = 4;         // Accepted value
+  int64 highest_n = 5;    // Highest proposal number seen so far
+  string value = 6;       // Proposed value
+  int32 status = 7;  // Consensus status
 }
 
 message Empty{}
