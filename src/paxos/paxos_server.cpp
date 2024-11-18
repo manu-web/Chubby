@@ -32,6 +32,8 @@ using paxos::HeartbeatResponse;
 using paxos::Paxos;
 using paxos::PrepareRequest;
 using paxos::PrepareResponse;
+using paxos::ElectRequest;
+using paxos::ElectResponse;
 
 enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN };
 
@@ -596,7 +598,74 @@ private:
   //   return false;
   // }
 
-  void Election(int view, int offset);
+  void Election(int my_view, int offset) {
+    while (true) {
+      int majority_count = 0;
+      int reject_count = 0;
+      int64_t highest_view = -1;
+      int max_highest_accepted_seq = -1;
+
+      for (const auto &pair : paxos_stubs_map) {
+        ClientContext context;
+        ElectRequest request;
+        ElectResponse response;
+        request.set_view(my_view + offset);
+
+        if (pair.first != server_address) {
+          Status status = pair.second->Elect(&context, request, &response);
+          
+          if (status.ok()) {
+            if (response.status() == "Reject") {
+                reject_count++;
+                if (response.view() > highest_view) {
+                    highest_view = response.view();
+                }
+            } else if (response.status() == "OK") {
+                majority_count++;
+                if (response.highest_seq() > max_highest_accepted_seq) {
+                    max_highest_accepted_seq = response.highest_seq();
+                }
+            }
+          }
+        }
+      }
+
+      mu.lock();
+      if (reject_count > 0) {
+          if (highest_view > view_number && my_view + offset < highest_view) {
+              view_number = highest_view;
+              leader_dead = false;
+              missed_heartbeats = 0;
+          }
+          mu.unlock();
+          return;
+      }
+
+      if (majority_count + 1 > paxos_stubs_map.size() / 2) {
+          if (highest_view <= my_view + offset && view_number < my_view + offset) {
+              leader_dead = false;
+              view_number = my_view + offset;
+              missed_heartbeats = 0;
+              if (max_highest_accepted_seq > highest_accepted_seq) {
+                  highest_accepted_seq = max_highest_accepted_seq;
+              }
+              mu.unlock();
+              return; // Election succeeded
+          } else {
+              if (highest_view > view_number) {
+                  view_number = highest_view;
+                  leader_dead = false;
+                  missed_heartbeats = 0;
+              }
+              mu.unlock();
+              return; // Election failed
+          }
+      }
+
+      mu.unlock();
+      std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 100));
+    }
+  }
 };
 
 void RunServer() {}
