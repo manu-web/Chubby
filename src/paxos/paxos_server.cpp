@@ -86,7 +86,6 @@ private:
   int is_dead;
   std::string server_address;
   std::string master_address;
-  std::mutex mutex;
   std::map<int, PaxosSlot> log;
   ThreadPool accept_thread_pool; // Should be formed conditionally if the
                                  // current server is a master
@@ -415,7 +414,7 @@ private:
 
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
                    HeartbeatResponse *response) override {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(mu);
     if (me == request->id()) {
       missed_heartbeats = 0;
       return Status::OK;
@@ -485,21 +484,70 @@ private:
   }
 
   void SendHeartbeats() {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (view % group_size == me) {
+    mu.lock();
+    if (view % group_size != me) {
+      mu.unlock();
+      return;
+    }
+
+    HeartbeatRequest request;
+    ClientContext context;
+    HeartbeatResponse response;
+    std::map<int, PaxosSlot *> request_slots;
+
+    for (const auto &pair : slots) {
+      if (pair.second->status == ConsensusStatus::DECIDED) {
+        auto decided_value = pair.second->value;
+        auto newSlot = initSlot(view);
+        newSlot->value = decided_value;
+        request_slots[pair.first] = newSlot;
+      }
+    }
+
+    for (const auto &pair : request_slots) {
+      paxos::PaxosSlot protobufSlot;
+      pair.second->ToProtobuf(&protobufSlot);
+      (*request.mutable_slots())[pair.first] = protobufSlot;
+    }
+    int curr_view = view;
+    mu.unlock();
+
+    if (curr_view % group_size == me) {
       for (const auto &pair : paxos_stubs_map) {
-        std::cout << pair.first << std::endl;
-        HeartbeatRequest message;
-        ClientContext context;
-        HeartbeatResponse response;
-        // message.set_server_id(server_address);
-        pair.second->Heartbeat(&context, message, &response);
+        mu.lock();
+        request.set_id(me);
+        request.set_view(curr_view);
+        for (const int val : done) {
+          request.add_done(val);
+        }
+        mu.unlock();
+        Status status = pair.second->Heartbeat(&context, request, &response);
+        if (status.ok() && pair.first != server_address) {
+          mu.lock();
+          std::map<int, PaxosSlot *> response_slots;
+
+          for (const auto &pair : response.slots()) {
+            const paxos::PaxosSlot &slot = pair.second;
+            response_slots[pair.first] = fillSlot(slot);
+          }
+
+          for (const auto &pair : response_slots) {
+            auto slot = addSlots(pair.first);
+            slot->mu_.lock();
+            if (slot->status != ConsensusStatus::DECIDED) {
+              slot->status = ConsensusStatus::DECIDED;
+              slot->value = pair.second->value;
+            }
+            slot->mu_.unlock();
+          }
+          mu.unlock();
+        }
       }
     }
   }
 
   void DetectLeaderFailure() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(mu);
     missed_heartbeats++;
 
     if (missed_heartbeats > 3) {
