@@ -240,7 +240,7 @@ private:
     return Status::OK;
   }
 
-  void Start(int seq, int v) {
+  void Start(int seq, std::string v) {
     std::unique_lock<std::mutex> start_on_forward_lock(mu);
 
     if (seq < lowest_slot) {
@@ -259,7 +259,7 @@ private:
     }
   }
 
-  void StartOnForward(int seq, int v) {
+  void StartOnForward(int seq, std::string v) {
     std::unique_lock<std::mutex> start_on_forward_lock(mu);
     PaxosSlot *slot = addSlots(seq);
 
@@ -275,19 +275,20 @@ private:
     // TODO : Implement forward RPCs here
   }
 
-  void StartOnNewSlot(int seq, int v, PaxosSlot *&slot, int my_view) {
+  void StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view) {
 
     std::unique_lock<std::mutex> slot_lock(slot->mu_);
     if (slot->status == DECIDED || is_dead) {
       return;
     }
 
-    bool is_decided_prep;
-    int decided_V;
     int highest_na;
-    int highest_va;
-    int majority_count;
-    int reject_count;
+    std::string highest_va = v;
+    std::atomic<bool> is_decided_prep;
+    std::string decided_V;
+    std::atomic<int> majority_count;
+    std::atomic<int> reject_count;
+    std::atomic<int> highest_view = -1;
     std::map<int, int> na_count_map;
     highest_na = -1;
 
@@ -328,13 +329,51 @@ private:
       highest_va = v;
     }
 
-    bool is_decided_acc = false;
+    std::atomic<bool> is_decided_acc = false;
     if (!is_decided_prep) {
       majority_count = 0;
       reject_count = 0;
-      int highest_view = -1;
 
-      // TODO : Call the accept logic here
+      std::vector<std::thread> threads;
+      for (const auto &pair : paxos_stubs_map) {
+        threads.emplace_back([&]() {
+            ClientContext context;
+            AcceptRequest accept_request;
+            AcceptResponse accept_response;
+            accept_request.set_seq(seq); 
+            accept_request.set_view(my_view); 
+            accept_request.set_value(highest_va); 
+            accept_request.set_sender_id(me); 
+            accept_request.set_latest_done(done[me]); 
+            Status status = pair.second->Accept(&context, accept_request, &accept_response); //Have to add some timeout to the grpc request otherwise might be blocking
+
+            if (status.ok()) {
+                //TODO : Call Forget RPC here
+                if (accept_response.status() == "OK") {
+                    majority_count++;
+                } else {
+                    reject_count++;
+                    if (accept_response.view() > highest_view) {
+                        highest_view = accept_response.view();
+                    }
+                }
+                if (accept_response.latest_done() >= seq || accept_response.value() != "") {
+                    is_decided_acc = true;
+                    mu.lock();
+                    decided_V = accept_response.value();
+                    mu.unlock();
+                }
+            }
+
+            // if(reject_count > num_servers/2 || majority_count > num_servers/2) {
+					  //   break;
+        });
+      }
+
+      for (auto& thread : threads) {
+        thread.join();
+      }
+
 
       if (is_decided_acc)
         return;
@@ -632,8 +671,8 @@ private:
 
       mu.lock();
       if (reject_count > 0) {
-          if (highest_view > view_number && my_view + offset < highest_view) {
-              view_number = highest_view;
+          if (highest_view > view && my_view + offset < highest_view) {
+              view = highest_view;
               leader_dead = false;
               missed_heartbeats = 0;
           }
@@ -642,9 +681,9 @@ private:
       }
 
       if (majority_count + 1 > paxos_stubs_map.size() / 2) {
-          if (highest_view <= my_view + offset && view_number < my_view + offset) {
+          if (highest_view <= my_view + offset && view < my_view + offset) {
               leader_dead = false;
-              view_number = my_view + offset;
+              view = my_view + offset;
               missed_heartbeats = 0;
               if (max_highest_accepted_seq > highest_accepted_seq) {
                   highest_accepted_seq = max_highest_accepted_seq;
@@ -652,8 +691,8 @@ private:
               mu.unlock();
               return; // Election succeeded
           } else {
-              if (highest_view > view_number) {
-                  view_number = highest_view;
+              if (highest_view > view) {
+                  view = highest_view;
                   leader_dead = false;
                   missed_heartbeats = 0;
               }
