@@ -80,16 +80,13 @@ private:
   int first_port;
   int last_port;
   int self_port;
-  int self_index;
   int missed_heartbeats;
   int highest_accepted_seq;
-  int leader_dead;
   int num_servers;
   int is_dead;
   std::string server_address;
   std::string master_address;
-  std::mutex log_mutex;
-  std::mutex leader_mutex;
+  std::mutex mutex;
   std::map<int, PaxosSlot> log;
   ThreadPool accept_thread_pool; // Should be formed conditionally if the
                                  // current server is a master
@@ -115,7 +112,7 @@ private:
     this->last_port = 50051 + group_size - 1;
     this->server_address = server_address;
     this->self_port = getPortNumber(server_address);
-    this->self_index = self_port % group_size;
+    this->me = self_port % group_size;
     InitializeServerStubs();
   }
 
@@ -241,47 +238,46 @@ private:
 
     return Status::OK;
   }
-  
-  void Start(int seq,int v){
+
+  void Start(int seq, int v) {
     std::unique_lock<std::mutex> start_on_forward_lock(mu);
 
-    if(seq < lowest_slot){
+    if (seq < lowest_slot) {
       return;
     }
 
     PaxosSlot *slot = addSlots(seq);
-    if(slot->status != DECIDED && !is_dead){
-      if(view_number%num_servers == me){
-        if(!leader_dead){
-          StartOnNewSlot(seq,v,slot,view_number);
+    if (slot->status != DECIDED && !is_dead) {
+      if (view % num_servers == me) {
+        if (!leader_dead) {
+          StartOnNewSlot(seq, v, slot, view);
         }
-      }else{
-          StartOnForward(seq,v);
+      } else {
+        StartOnForward(seq, v);
       }
     }
   }
 
-  void StartOnForward(int seq,int v){
+  void StartOnForward(int seq, int v) {
     std::unique_lock<std::mutex> start_on_forward_lock(mu);
     PaxosSlot *slot = addSlots(seq);
 
-    if(slot->status != DECIDED){
-      if(view_number%(num_servers) == me){
-        if(!leader_dead){
-          StartOnNewSlot(seq,v,slot,view_number);
+    if (slot->status != DECIDED) {
+      if (view % (num_servers) == me) {
+        if (!leader_dead) {
+          StartOnNewSlot(seq, v, slot, view);
           return;
         }
       }
     }
 
-    //TODO : Implement forward RPCs here
-
+    // TODO : Implement forward RPCs here
   }
 
-  void StartOnNewSlot(int seq,int v,PaxosSlot* &slot,int my_view){
+  void StartOnNewSlot(int seq, int v, PaxosSlot *&slot, int my_view) {
 
     std::unique_lock<std::mutex> slot_lock(slot->mu_);
-    if(slot->status == DECIDED || is_dead){
+    if (slot->status == DECIDED || is_dead) {
       return;
     }
 
@@ -291,85 +287,83 @@ private:
     int highest_va;
     int majority_count;
     int reject_count;
-    std::map<int,int> na_count_map;
+    std::map<int, int> na_count_map;
     highest_na = -1;
 
     std::unique_lock<std::mutex> start_on_new_slot_lock(mu);
 
-    if(seq <= highest_accepted_seq){
+    if (seq <= highest_accepted_seq) {
       start_on_new_slot_lock.unlock();
-      while(slot->n <= slot->highest_N){
+      while (slot->n <= slot->highest_N) {
         slot->n += num_servers;
       }
 
-      //TODO: Prepare calling code comes here
+      // TODO: Prepare calling code comes here
 
-      if(highest_na > my_view){
+      if (highest_na > my_view) {
         start_on_new_slot_lock.lock();
-        if(highest_na > view_number){
-          view_number = highest_na;
+        if (highest_na > view) {
+          view = highest_na;
           leader_dead = false;
           missed_heartbeats = 0;
           start_on_new_slot_lock.unlock();
-          //TODO: Call start on forward
+          // TODO: Call start on forward
         }
         start_on_new_slot_lock.unlock();
-        //TODO: Call start on forward
-        return; 
+        // TODO: Call start on forward
+        return;
       }
 
-      if(majority_count <= num_servers/2 && !is_decided_prep){
+      if (majority_count <= num_servers / 2 && !is_decided_prep) {
         std::unique_lock<std::mutex> slot_lock(slot->mu_);
-        //TODO : Insert some delay
+        // TODO : Insert some delay
         slot_lock.unlock();
       }
-    }else{
+    } else {
       start_on_new_slot_lock.unlock();
     }
 
-    if(highest_na == -1){
+    if (highest_na == -1) {
       highest_va = v;
     }
 
     bool is_decided_acc = false;
-    if(!is_decided_prep){
+    if (!is_decided_prep) {
       majority_count = 0;
       reject_count = 0;
       int highest_view = -1;
 
-      //TODO : Call the accept logic here
+      // TODO : Call the accept logic here
 
-      if(is_decided_acc)
+      if (is_decided_acc)
         return;
 
-      if(highest_na > my_view){
+      if (highest_na > my_view) {
         start_on_new_slot_lock.lock();
-        if(highest_na > view_number){
-          view_number = highest_na;
+        if (highest_na > view) {
+          view = highest_na;
           leader_dead = false;
           missed_heartbeats = 0;
           start_on_new_slot_lock.unlock();
-          //TODO : Call start on forward
+          // TODO : Call start on forward
         }
         start_on_new_slot_lock.unlock();
-        //TODO :Call start on forward
-        return; 
+        // TODO :Call start on forward
+        return;
       }
 
-      if(majority_count <= num_servers/2 && !is_decided_prep){
+      if (majority_count <= num_servers / 2 && !is_decided_prep) {
         std::unique_lock<std::mutex> slot_lock(slot->mu_);
-        //TODO : Insert some delay
+        // TODO : Insert some delay
         slot_lock.unlock();
       }
-    
     }
 
-    if(is_decided_prep || is_decided_acc){
+    if (is_decided_prep || is_decided_acc) {
       highest_va = decided_V;
     }
 
-    //TODO : Call learn here
-    
+    // TODO : Call learn here
   }
 
   // bool send_propose(std::string server_address, int log_index,
@@ -421,7 +415,7 @@ private:
 
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
                    HeartbeatResponse *response) override {
-    std::lock_guard<std::mutex> lock(leader_mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     if (me == request->id()) {
       missed_heartbeats = 0;
       return Status::OK;
@@ -491,7 +485,8 @@ private:
   }
 
   void SendHeartbeats() {
-    if (view % group_size == self_index) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (view % group_size == me) {
       for (const auto &pair : paxos_stubs_map) {
         std::cout << pair.first << std::endl;
         HeartbeatRequest message;
@@ -504,18 +499,16 @@ private:
   }
 
   void DetectLeaderFailure() {
-    std::lock_guard<std::mutex> lock(leader_mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     missed_heartbeats++;
 
     if (missed_heartbeats > 3) {
       int mod = view % group_size;
 
-      if (mod < self_index) {
-        std::thread(&PaxosImpl::Election, this, view, self_index - mod)
-            .detach();
-      } else if (mod > self_index) {
-        std::thread(&PaxosImpl::Election, this, view,
-                    self_index + group_size - mod)
+      if (mod < me) {
+        std::thread(&PaxosImpl::Election, this, view, me - mod).detach();
+      } else if (mod > me) {
+        std::thread(&PaxosImpl::Election, this, view, me + group_size - mod)
             .detach();
       }
 
