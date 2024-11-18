@@ -40,10 +40,11 @@ message PrepareResponse {
 
 message AcceptRequest {
     int32 seq = 1;           // Sequence number
-    int64 proposal_number = 2; // Proposal number (N)
+    int32 view = 2;          // View number = Proposal number = N
     string value = 3;        // Proposed value (V)
     int32 sender_id = 4;     // Sender ID
     int32 latest_done = 5;   // Latest done index
+    
 }
 
 message AcceptResponse {

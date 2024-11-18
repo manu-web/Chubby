@@ -33,7 +33,7 @@ using paxos::Paxos;
 using paxos::PrepareRequest;
 using paxos::PrepareResponse;
 
-enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING };
+enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN};
 
 struct PaxosSlot {
   int64_t n;         // Proposal number
@@ -72,6 +72,8 @@ private:
   int self_index;
   int missed_heartbeats;
   int view_number;
+  int highest_accepted_seq;
+  int leader_dead;
   std::string server_address;
   std::string master_address;
   std::mutex log_mutex;
@@ -173,6 +175,48 @@ private:
     return Status::OK;
   }
 
+  Status Accept(ServerContext *context, const AcceptRequest *request,
+                AcceptResponse *response) override {
+
+    std::unique_lock<std::mutex> accept_lock(mu);
+    if (request->seq() < lowest_slot) {
+      return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                          "This slot has been garbage collected");
+    }
+    response->set_latest_done(done[me]);
+    PaxosSlot *slot = addSlots(request->seq());
+    if(request->view() > view_number){
+      view_number = request->view();
+      leader_dead = false;
+      missed_heartbeats = 0;
+    }
+    accept_lock.unlock();
+    std::unique_lock<std::mutex> slot_lock(slot->mu_);
+    response->set_view(slot->n_a);
+    response->set_value(slot->v_a);
+
+    if(request->view() >= slot->n_a){
+      slot->n_a = request->view();
+      slot->v_a = request->value();
+      response->set_status("OK");
+      accept_lock.lock();
+      if(request->seq() > highest_accepted_seq){
+        highest_accepted_seq = request->seq();
+      }
+      accept_lock.unlock();
+    }else{
+      response->set_status("REJECT");   
+    }
+
+    if(slot->status == DECIDED){
+      response->set_value(slot->value);
+    }else{
+      response->set_value(nullptr);
+    }
+
+    return Status::OK;
+  }
+
   // bool send_propose(std::string server_address, int log_index,
   //                   std::string value) {
   //   if (view_number % group_size == self_index) { // if its a master
@@ -189,69 +233,52 @@ private:
   //   }
   // }
 
-  bool InvokeAcceptRequests(std::string server_address, int log_index,
-                            std::string value) {
+  // bool InvokeAcceptRequests(std::string server_address, int log_index,
+  //                           std::string value) {
 
-    ClientContext context;
-    PaxosAcceptRequest paxos_accept_request;
-    PaxosAcceptResponse paxos_accept_response;
+  //   ClientContext context;
+  //   PaxosAcceptRequest paxos_accept_request;
+  //   PaxosAcceptResponse paxos_accept_response;
 
-    int retry_count = 0;
-    paxos_accept_request.set_proposal_number(
-        max_proposal_number_seen_so_far +
-        1); // TODO : Read from the db, maybe this machine just came up after
-            // failing
-    paxos_accept_request.set_log_index(log_index);
-    paxos_accept_request.set_value(value);
+  //   int retry_count = 0;
+  //   paxos_accept_request.set_proposal_number(
+  //       max_proposal_number_seen_so_far +
+  //       1); // TODO : Read from the db, maybe this machine just came up after
+  //           // failing
+  //   paxos_accept_request.set_log_index(log_index);
+  //   paxos_accept_request.set_value(value);
 
-    while (retry_count < max_accept_retries) {
-      Status status = paxos_stubs_map[server_address]->Accept(
-          &context, paxos_accept_request, &paxos_accept_response);
-      if (status.ok()) {
-        if (paxos_accept_response.is_accepted()) {
-          return true;
-        } else {
-          break;
-        }
-      }
-      retry_count++;
-    }
+  //   while (retry_count < max_accept_retries) {
+  //     Status status = paxos_stubs_map[server_address]->Accept(
+  //         &context, paxos_accept_request, &paxos_accept_response);
+  //     if (status.ok()) {
+  //       if (paxos_accept_response.is_accepted()) {
+  //         return true;
+  //       } else {
+  //         break;
+  //       }
+  //     }
+  //     retry_count++;
+  //   }
 
-    return false;
-  }
+  //   return false;
+  // }
 
-  Status Accept(ServerContext *context, const PaxosAcceptRequest *request,
-                PaxosAcceptResponse *response) override {
-    int proposal_number = request->proposal_number();
-    int log_index = request->log_index();
-
-    if (proposal_number >= log[log_index].n_a) {
-      // max_proposal_number_seen_so_far = max(proposal_number; //Need to
-      // persist it to disk
-      log[log_index].n_a = proposal_number;  // Need to persist it to disk
-      log[log_index].v_a = request->value(); // Need to persist it to disk
-      response->set_is_accepted(true);
-    } else {
-      response->set_is_accepted(false);
-    }
-
-    return Status::OK;
-  }
 
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
                    HeartbeatResponse *response) override {
     std::lock_guard<std::mutex> lock(leader_mutex);
-    if (self_index == request->server_index()) {
+    if (self_index == request->id()) {
       missed_heartbeats = 0;
       return Status::OK;
     }
 
-    if (view_number = request->view()) {
+    if (view_number >= request->view()) {
       return grpc::Status(grpc::StatusCode::ABORTED,
                           "your view is lower than mine");
     }
 
-    if (impl.View < args.View) {
+    if (view_number < request->view()) {
       view_number = request->view();
       leader_dead = false;
       missed_heartbeats = 0;
@@ -275,7 +302,7 @@ private:
         std::cout << pair.first << std::endl;
         HeartbeatRequest message;
         ClientContext context;
-        Empty response;
+        HeartbeatResponse response;
         // message.set_server_id(server_address);
         pair.second->Heartbeat(&context, message, &response);
       }
@@ -303,36 +330,36 @@ private:
     }
   }
 
-  bool InvokeAcceptRequests(std::string server_address, int log_index,
-                            std::string value) {
+  // bool InvokeAcceptRequests(std::string server_address, int log_index,
+  //                           std::string value) {
 
-    ClientContext context;
-    AcceptRequest paxos_accept_request;
-    AcceptResponse paxos_accept_response;
+  //   ClientContext context;
+  //   AcceptRequest paxos_accept_request;
+  //   AcceptResponse paxos_accept_response;
 
-    int retry_count = 0;
-    paxos_accept_request.set_proposal_number(
-        max_proposal_number_seen_so_far +
-        1); // TODO : Read from the db, maybe this machine just came up after
-            // failing
-    paxos_accept_request.set_log_index(log_index);
-    paxos_accept_request.set_value(value);
+  //   int retry_count = 0;
+  //   paxos_accept_request.set_proposal_number(
+  //       max_proposal_number_seen_so_far +
+  //       1); // TODO : Read from the db, maybe this machine just came up after
+  //           // failing
+  //   paxos_accept_request.set_log_index(log_index);
+  //   paxos_accept_request.set_value(value);
 
-    while (retry_count < max_accept_retries) {
-      Status status = paxos_stubs_map[server_address]->Accept(
-          &context, paxos_accept_request, &paxos_accept_response);
-      if (status.ok()) {
-        if (paxos_accept_response.is_accepted()) {
-          return true;
-        } else {
-          break;
-        }
-      }
-      retry_count++;
-    }
+  //   while (retry_count < max_accept_retries) {
+  //     Status status = paxos_stubs_map[server_address]->Accept(
+  //         &context, paxos_accept_request, &paxos_accept_response);
+  //     if (status.ok()) {
+  //       if (paxos_accept_response.is_accepted()) {
+  //         return true;
+  //       } else {
+  //         break;
+  //       }
+  //     }
+  //     retry_count++;
+  //   }
 
-    return false;
-  }
+  //   return false;
+  // }
 
   void Election(int view, int offset);
 };
