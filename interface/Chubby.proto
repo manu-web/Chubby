@@ -24,6 +24,8 @@ message PaxosAcceptRequest {
     uint64 proposal_number = 1;
     uint64 log_index = 2;
     string value = 3;
+    uint64 commit_log_index = 4;
+    string commit_log_value = 5;
 }
 
 message PaxosAcceptResponse {
@@ -52,10 +54,10 @@ message HeartbeatResponse {
 }
 
 message PaxosSlot {
-    int n_p;
-    int n_a;
-    std::string v_a;
-    int status;
+    uint64 n_p = 1;
+    uint64 n_a = 2;
+    string v_a = 3;
+    uint64 status = 4;
 }
 
 message Empty{}

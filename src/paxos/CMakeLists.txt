@@ -6,12 +6,14 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/../../interface)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../common)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../include)
 
-find_library(ROCKSDB_LIBRARY rocksdb REQUIRED)
 find_path(ROCKSDB_INCLUDE_DIR rocksdb/db.h REQUIRED)
 include_directories(${ROCKSDB_INCLUDE_DIR})
 
-add_executable(chubby_server server.cpp)
-    target_link_libraries(chubby_server
+# add_library(keyValueStoreLib keyValueStore.cpp)
+
+add_executable(paxos_server paxos_server.cpp paxos_rpc.cpp)
+    target_link_libraries(paxos_server
+	    # keyValueStoreLib
         Chubby_proto_grpc
         threadPoolLib
         rocksDBlib

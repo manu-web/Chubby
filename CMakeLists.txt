@@ -34,5 +34,7 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 add_subdirectory(client)
 add_subdirectory(interface)
 add_subdirectory(src/server)
+add_subdirectory(src/paxos)
+add_subdirectory(src/common)
 
 
