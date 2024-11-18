@@ -74,6 +74,8 @@ private:
   int view_number;
   int highest_accepted_seq;
   int leader_dead;
+  int num_servers;
+  int is_dead;
   std::string server_address;
   std::string master_address;
   std::mutex log_mutex;
@@ -215,6 +217,136 @@ private:
     }
 
     return Status::OK;
+  }
+  
+  void Start(int seq,int v){
+    std::unique_lock<std::mutex> start_on_forward_lock(mu);
+
+    if(seq < lowest_slot){
+      return;
+    }
+
+    PaxosSlot *slot = addSlots(seq);
+    if(slot->status != DECIDED && !is_dead){
+      if(view_number%num_servers == me){
+        if(!leader_dead){
+          StartOnNewSlot(seq,v,slot,view_number);
+        }
+      }else{
+          StartOnForward(seq,v);
+      }
+    }
+  }
+
+  void StartOnForward(int seq,int v){
+    std::unique_lock<std::mutex> start_on_forward_lock(mu);
+    PaxosSlot *slot = addSlots(seq);
+
+    if(slot->status != DECIDED){
+      if(view_number%(num_servers) == me){
+        if(!leader_dead){
+          StartOnNewSlot(seq,v,slot,view_number);
+          return;
+        }
+      }
+    }
+
+    //TODO : Implement forward RPCs here
+
+  }
+
+  void StartOnNewSlot(int seq,int v,PaxosSlot* &slot,int my_view){
+
+    std::unique_lock<std::mutex> slot_lock(slot->mu_);
+    if(slot->status == DECIDED || is_dead){
+      return;
+    }
+
+    bool is_decided_prep;
+    int decided_V;
+    int highest_na;
+    int highest_va;
+    int majority_count;
+    int reject_count;
+    std::map<int,int> na_count_map;
+    highest_na = -1;
+
+    std::unique_lock<std::mutex> start_on_new_slot_lock(mu);
+
+    if(seq <= highest_accepted_seq){
+      start_on_new_slot_lock.unlock();
+      while(slot->n <= slot->highest_N){
+        slot->n += num_servers;
+      }
+
+      //TODO: Prepare calling code comes here
+
+      if(highest_na > my_view){
+        start_on_new_slot_lock.lock();
+        if(highest_na > view_number){
+          view_number = highest_na;
+          leader_dead = false;
+          missed_heartbeats = 0;
+          start_on_new_slot_lock.unlock();
+          //TODO: Call start on forward
+        }
+        start_on_new_slot_lock.unlock();
+        //TODO: Call start on forward
+        return; 
+      }
+
+      if(majority_count <= num_servers/2 && !is_decided_prep){
+        std::unique_lock<std::mutex> slot_lock(slot->mu_);
+        //TODO : Insert some delay
+        slot_lock.unlock();
+      }
+    }else{
+      start_on_new_slot_lock.unlock();
+    }
+
+    if(highest_na == -1){
+      highest_va = v;
+    }
+
+    bool is_decided_acc = false;
+    if(!is_decided_prep){
+      majority_count = 0;
+      reject_count = 0;
+      int highest_view = -1;
+
+      //TODO : Call the accept logic here
+
+      if(is_decided_acc)
+        return;
+
+      if(highest_na > my_view){
+        start_on_new_slot_lock.lock();
+        if(highest_na > view_number){
+          view_number = highest_na;
+          leader_dead = false;
+          missed_heartbeats = 0;
+          start_on_new_slot_lock.unlock();
+          //TODO : Call start on forward
+        }
+        start_on_new_slot_lock.unlock();
+        //TODO :Call start on forward
+        return; 
+      }
+
+      if(majority_count <= num_servers/2 && !is_decided_prep){
+        std::unique_lock<std::mutex> slot_lock(slot->mu_);
+        //TODO : Insert some delay
+        slot_lock.unlock();
+      }
+    
+    }
+
+    if(is_decided_prep || is_decided_acc){
+      highest_va = decided_V;
+    }
+
+    //TODO : Call learn here
+    
   }
 
   // bool send_propose(std::string server_address, int log_index,
