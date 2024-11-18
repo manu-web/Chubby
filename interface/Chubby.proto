@@ -6,7 +6,7 @@ service Paxos {
     rpc Propose(PaxosProposeRequest) returns (PaxosProposeResponse);
     rpc Accept(PaxosAcceptRequest) returns (PaxosAcceptResponse);
     rpc Write(WriteRequest) returns (WriteResponse);
-    rpc Heartbeat(HeartbeatRequest) returns (Empty);
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 message PaxosProposeRequest {

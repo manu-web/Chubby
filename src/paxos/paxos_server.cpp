@@ -54,6 +54,7 @@ private:
   int self_port;
   int self_index;
   int missed_heartbeats;
+  int view_number;
   std::string server_address;
   std::string master_address;
   std::mutex log_mutex;
@@ -241,7 +242,7 @@ private:
                           "your view is lower than mine");
     }
 
-    if (impl.View < args.View) {
+    if (view_number < request->view()) {
       view_number = request->view();
       leader_dead = false;
       missed_heartbeats = 0;
@@ -256,7 +257,7 @@ private:
         std::cout << pair.first << std::endl;
         HeartbeatRequest message;
         ClientContext context;
-        Empty response;
+        HeartbeatResponse response;
         // message.set_server_id(server_address);
         pair.second->Heartbeat(&context, message, &response);
       }
