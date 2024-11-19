@@ -34,6 +34,8 @@ using paxos::PrepareRequest;
 using paxos::PrepareResponse;
 using paxos::ElectRequest;
 using paxos::ElectResponse;
+using paxos::ForwardLeaderRequest;
+using paxos::ForwardLeaderResponse;
 
 enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN };
 
@@ -240,6 +242,16 @@ private:
     return Status::OK;
   }
 
+  Status ForwardLeader(ServerContext *context, const ForwardLeaderRequest *request,
+                ForwardLeaderResponse *response) override {
+
+    Start(request->seq(), request->value());
+    response->set_status("OK");
+
+    return Status::OK;
+  
+  }
+
   void Start(int seq, std::string v) {
     std::unique_lock<std::mutex> start_on_forward_lock(mu);
 
@@ -272,7 +284,22 @@ private:
       }
     }
 
-    // TODO : Implement forward RPCs here
+    ClientContext context;
+    ForwardLeaderRequest forward_request;
+    ForwardLeaderResponse forward_response;
+    
+    std::string leader_address("127.0.0.1:" + std::to_string(first_port + view%num_servers));
+
+    forward_request.set_seq(seq);
+    forward_request.set_value(v);
+    paxos_stubs_map[leader_address]->ForwardLeader(&context,forward_request,&forward_response);
+    
+    if(forward_response.status() != "OK"){
+      mu.lock();
+      std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
+      mu.unlock();
+    }
+  
   }
 
   void StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view) {
@@ -309,16 +336,16 @@ private:
           leader_dead = false;
           missed_heartbeats = 0;
           start_on_new_slot_lock.unlock();
-          // TODO: Call start on forward
+          StartOnForward(seq,v);
         }
         start_on_new_slot_lock.unlock();
-        // TODO: Call start on forward
+        StartOnForward(seq,v);
         return;
       }
 
       if (majority_count <= num_servers / 2 && !is_decided_prep) {
         std::unique_lock<std::mutex> slot_lock(slot->mu_);
-        // TODO : Insert some delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
         slot_lock.unlock();
       }
     } else {
@@ -385,16 +412,16 @@ private:
           leader_dead = false;
           missed_heartbeats = 0;
           start_on_new_slot_lock.unlock();
-          // TODO : Call start on forward
+          StartOnForward(seq,v);
         }
         start_on_new_slot_lock.unlock();
-        // TODO :Call start on forward
+        StartOnForward(seq,v);
         return;
       }
 
       if (majority_count <= num_servers / 2 && !is_decided_prep) {
         std::unique_lock<std::mutex> slot_lock(slot->mu_);
-        // TODO : Insert some delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
         slot_lock.unlock();
       }
     }
