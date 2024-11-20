@@ -169,6 +169,28 @@ private:
     return slots[seq];
   }
 
+  Status Elect(ServerContext *context, const ElectRequest *request,
+                 ElectResponse *response) override {
+    mu.lock();
+    if (request->view() > view) {
+      response->set_status("OK");
+      view = request->view();
+      response->set_view(view);
+      leader_dead = false;
+      missed_heartbeats = 0;
+      response->set_highest_seq(highest_accepted_seq);
+    } else if (request->view() == view) {
+      response->set_status("OK");
+      response->set_view(view);
+      response->set_highest_seq(highest_accepted_seq);
+    } else {
+      response->set_status("Reject");
+      response->set_view(view);
+    }
+    mu.unlock();
+    return Status::OK;
+  }
+
   Status Prepare(ServerContext *context, const PrepareRequest *request,
                  PrepareResponse *response) override {
     std::unique_lock<std::mutex> prepare_lock(mu);
