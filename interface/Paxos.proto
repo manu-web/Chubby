@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package paxos;
+
+service Paxos {
+    rpc Elect(ElectRequest) returns (ElectResponse);
+    rpc Prepare(PrepareRequest) returns (PrepareResponse);
+    rpc Accept(AcceptRequest) returns (AcceptResponse);
+    rpc Decide(DecideRequest) returns (DecideResponse);
+    rpc ForwardLeader(ForwardLeaderRequest) returns (ForwardLeaderResponse);
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message ElectRequest {
+    int64 view = 1; // View number
+    int32 id = 2;   // Node ID
+}
+
+message ElectResponse {
+    int64 view = 1;        // View number
+    string status = 2;     // OK or Reject
+    int32 highest_seq = 3; // Highest accepted sequence number
+}
+
+message PrepareRequest {
+    int32 seq = 1;           // Sequence number
+    int64 proposal_number = 2; // Proposal number (N)
+    int32 latest_done = 3;   // Latest done index
+    int32 sender_id = 4;     // Sender ID
+}
+
+message PrepareResponse {
+    string status = 1;       // OK or Reject
+    int64 n_a = 2;           // Accepted proposal number (Na)
+    string v_a = 3;          // Accepted value (Va)
+    int64 highest_n = 4;     // Highest seen proposal number
+    int32 latest_done = 5;   // Latest done index
+    string value = 6;        // Current value (V)
+}
+
+message AcceptRequest {
+    int32 seq = 1;           // Sequence number
+    int32 view = 2;          // View number = Proposal number = N
+    string value = 3;        // Proposed value (V)
+    int32 sender_id = 4;     // Sender ID
+    int32 latest_done = 5;   // Latest done index
+    
+}
+
+message AcceptResponse {
+    string status = 1;       // OK or Reject
+    int32 latest_done = 2;   // Latest done index
+    string value = 3;        // Accepted value
+    int64 view = 4;          // View number
+}
+
+message DecideRequest {
+    int32 seq = 1;           // Sequence number
+    string value = 2;        // Decided value (V)
+    int32 sender_id = 3;     // Sender ID
+    int32 latest_done = 4;   // Latest done index
+}
+
+message DecideResponse {
+    int32 latest_done = 1;   // Latest done index
+}
+
+message ForwardLeaderRequest {
+    int32 seq = 1;           // Sequence number
+    string value = 2;        // Value to forward
+}
+
+message ForwardLeaderResponse {
+    string status = 1;       // OK or Reject
+}
+
+message HeartbeatRequest {
+    int32 id = 1;            // Sender ID
+    int32 view = 2;          // View number
+    repeated int32 done = 3; // Array of completed indexes
+    map<int32, PaxosSlot> slots = 4; // Map of slots
+}
+
+message HeartbeatResponse {
+    string status = 1;       // OK or Reject
+    map<int32, PaxosSlot> slots = 2; // Map of slots
+}
+
+message PaxosSlot {
+  int64 n = 1;            // Proposal number
+  int64 n_p = 2;          // Prepared proposal number
+  int64 n_a = 3;          // Accepted proposal number
+  string v_a = 4;         // Accepted value
+  int64 highest_n = 5;    // Highest proposal number seen so far
+  string value = 6;       // Proposed value
+  int32 status = 7;  // Consensus status
+}
+
+message Empty{}
