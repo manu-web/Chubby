@@ -20,9 +20,13 @@ using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
 
-// class ChubbyImpl final : public Paxos::Service {
-// private:
-// }
-int main(){
-  
-}
+using chubby::Chubby;
+
+class ChubbyImpl final : public Chubby::Service {
+private:
+  ChubbyImpl() {}
+};
+
+void RunServer() {}
+
+int main(int argc, char **argv) { return 0; }
