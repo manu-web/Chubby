@@ -1,5 +1,5 @@
-#include "Chubby.grpc.pb.h"
-#include "Chubby.pb.h"
+#include "Paxos.grpc.pb.h"
+#include "Paxos.pb.h"
 #include "rocksdb_wrapper.h"
 #include "thread_pool.h"
 #include <chrono>

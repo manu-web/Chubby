@@ -14,7 +14,7 @@ include_directories(${ROCKSDB_INCLUDE_DIR})
 add_executable(paxos_server paxos_server.cpp paxos_rpc.cpp)
     target_link_libraries(paxos_server
 	    # keyValueStoreLib
-        Chubby_proto_grpc
+        Paxos_proto_grpc
         threadPoolLib
         rocksDBlib
         ${SQLite3_LIBRARIES}
