@@ -26,16 +26,16 @@ using paxos::AcceptRequest;
 using paxos::AcceptResponse;
 using paxos::DecideRequest;
 using paxos::DecideResponse;
+using paxos::ElectRequest;
+using paxos::ElectResponse;
 using paxos::Empty;
+using paxos::ForwardLeaderRequest;
+using paxos::ForwardLeaderResponse;
 using paxos::HeartbeatRequest;
 using paxos::HeartbeatResponse;
 using paxos::Paxos;
 using paxos::PrepareRequest;
 using paxos::PrepareResponse;
-using paxos::ElectRequest;
-using paxos::ElectResponse;
-using paxos::ForwardLeaderRequest;
-using paxos::ForwardLeaderResponse;
 
 enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN };
 
@@ -96,7 +96,7 @@ private:
   RocksDBWrapper rocks_db_wrapper;
   std::map<std::string, std::unique_ptr<Paxos::Stub>> paxos_stubs_map;
 
-  // int getPortNumber(const std::string &address);
+  int getPortNumber(const std::string &address);
   // void SendHeartbeats();
   // void DetectLeaderFailure();
 
@@ -219,6 +219,7 @@ private:
     } else {
       response->set_value(nullptr);
     }
+    slot_lock.unlock();
     return Status::OK;
   }
 
@@ -264,14 +265,14 @@ private:
     return Status::OK;
   }
 
-  Status ForwardLeader(ServerContext *context, const ForwardLeaderRequest *request,
-                ForwardLeaderResponse *response) override {
+  Status ForwardLeader(ServerContext *context,
+                       const ForwardLeaderRequest *request,
+                       ForwardLeaderResponse *response) override {
 
     Start(request->seq(), request->value());
     response->set_status("OK");
 
     return Status::OK;
-  
   }
 
   void Start(int seq, std::string v) {
@@ -309,19 +310,21 @@ private:
     ClientContext context;
     ForwardLeaderRequest forward_request;
     ForwardLeaderResponse forward_response;
-    
-    std::string leader_address("127.0.0.1:" + std::to_string(first_port + view%num_servers));
+
+    std::string leader_address("127.0.0.1:" +
+                               std::to_string(first_port + view % num_servers));
 
     forward_request.set_seq(seq);
     forward_request.set_value(v);
-    paxos_stubs_map[leader_address]->ForwardLeader(&context,forward_request,&forward_response);
-    
-    if(forward_response.status() != "OK"){
+    paxos_stubs_map[leader_address]->ForwardLeader(&context, forward_request,
+                                                   &forward_response);
+
+    if (forward_response.status() != "OK") {
       mu.lock();
-      std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(std::rand() % 1000));
       mu.unlock();
     }
-  
   }
 
   void StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view) {
@@ -330,10 +333,11 @@ private:
     if (slot->status == DECIDED || is_dead) {
       return;
     }
+    // prepare phase
 
     int highest_na;
     std::string highest_va = v;
-    std::atomic<bool> is_decided_prep;
+    std::atomic<bool> is_decided_prep = false;
     std::string decided_V;
     std::atomic<int> majority_count;
     std::atomic<int> reject_count;
@@ -342,14 +346,64 @@ private:
     highest_na = -1;
 
     std::unique_lock<std::mutex> start_on_new_slot_lock(mu);
-
+    majority_count = 0;
+    reject_count = 0;
     if (seq <= highest_accepted_seq) {
       start_on_new_slot_lock.unlock();
       while (slot->n <= slot->highest_N) {
         slot->n += num_servers;
       }
 
-      // TODO: Prepare calling code comes here
+      std::vector<std::thread> threads;
+      for (const auto &pair : paxos_stubs_map) {
+        threads.emplace_back([&]() {
+          ClientContext context;
+          PrepareRequest prepare_request;
+          PrepareResponse prepare_response;
+          prepare_request.set_seq(seq);
+          prepare_request.set_proposal_number(slot->n);
+          prepare_request.set_sender_id(me);
+          prepare_request.set_latest_done(done[me]);
+          Status status = pair.second->Prepare(&context, prepare_request,
+                                               &prepare_response);
+
+          if (status.ok()) {
+            // TODO : Call Forget RPC here
+            if (prepare_response.status() == "OK") {
+              majority_count++;
+              if (prepare_response.n_a() > highest_na) {
+                highest_na = prepare_response.n_a();
+                highest_va = prepare_response.v_a();
+                na_count_map[highest_na] += 1;
+              } else {
+                reject_count += 1;
+                if (slot->highest_N < prepare_response.highest_n()) {
+                  slot->highest_N = prepare_response.highest_n();
+                }
+              }
+              if (prepare_response.status() == "OK" &&
+                  prepare_response.value() != "") {
+                is_decided_prep = true;
+                decided_V = prepare_response.value();
+                return;
+              }
+              if (na_count_map[highest_na] > paxos_stubs_map.size() / 2) {
+                is_decided_prep = true;
+                decided_V = highest_va;
+                return;
+              }
+            }
+          }
+          if (reject_count > paxos_stubs_map.size() / 2 ||
+              majority_count > paxos_stubs_map.size() / 2 ||
+              na_count_map[highest_na] > paxos_stubs_map.size() / 2) {
+            return;
+          }
+        });
+      }
+      for (auto &t : threads) {
+        t.join();
+      }
 
       if (highest_na > my_view) {
         start_on_new_slot_lock.lock();
@@ -358,16 +412,17 @@ private:
           leader_dead = false;
           missed_heartbeats = 0;
           start_on_new_slot_lock.unlock();
-          StartOnForward(seq,v);
+          StartOnForward(seq, v);
         }
         start_on_new_slot_lock.unlock();
-        StartOnForward(seq,v);
+        StartOnForward(seq, v);
         return;
       }
 
       if (majority_count <= num_servers / 2 && !is_decided_prep) {
         std::unique_lock<std::mutex> slot_lock(slot->mu_);
-        std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(std::rand() % 1000));
         slot_lock.unlock();
       }
     } else {
@@ -386,43 +441,47 @@ private:
       std::vector<std::thread> threads;
       for (const auto &pair : paxos_stubs_map) {
         threads.emplace_back([&]() {
-            ClientContext context;
-            AcceptRequest accept_request;
-            AcceptResponse accept_response;
-            accept_request.set_seq(seq); 
-            accept_request.set_view(my_view); 
-            accept_request.set_value(highest_va); 
-            accept_request.set_sender_id(me); 
-            accept_request.set_latest_done(done[me]); 
-            Status status = pair.second->Accept(&context, accept_request, &accept_response); //Have to add some timeout to the grpc request otherwise might be blocking
+          ClientContext context;
+          AcceptRequest accept_request;
+          AcceptResponse accept_response;
+          accept_request.set_seq(seq);
+          accept_request.set_view(my_view);
+          accept_request.set_value(highest_va);
+          accept_request.set_sender_id(me);
+          accept_request.set_latest_done(done[me]);
+          Status status = pair.second->Accept(
+              &context, accept_request,
+              &accept_response); // Have to add some timeout to the grpc
+                                 // request otherwise might be blocking
 
-            if (status.ok()) {
-                //TODO : Call Forget RPC here
-                if (accept_response.status() == "OK") {
-                    majority_count++;
-                } else {
-                    reject_count++;
-                    if (accept_response.view() > highest_view) {
-                        highest_view = accept_response.view();
-                    }
-                }
-                if (accept_response.latest_done() >= seq || accept_response.value() != "") {
-                    is_decided_acc = true;
-                    mu.lock();
-                    decided_V = accept_response.value();
-                    mu.unlock();
-                }
+          if (status.ok()) {
+            // TODO : Call Forget RPC here
+            if (accept_response.status() == "OK") {
+              majority_count++;
+            } else {
+              reject_count++;
+              if (accept_response.view() > highest_view) {
+                highest_view = accept_response.view();
+              }
             }
+            if (accept_response.latest_done() >= seq ||
+                accept_response.value() != "") {
+              is_decided_acc = true;
+              mu.lock();
+              decided_V = accept_response.value();
+              mu.unlock();
+            }
+          }
 
-            // if(reject_count > num_servers/2 || majority_count > num_servers/2) {
-					  //   break;
+          // if(reject_count > num_servers/2 || majority_count >
+          // num_servers/2) {
+          //   break;
         });
       }
 
-      for (auto& thread : threads) {
+      for (auto &thread : threads) {
         thread.join();
       }
-
 
       if (is_decided_acc)
         return;
@@ -434,16 +493,17 @@ private:
           leader_dead = false;
           missed_heartbeats = 0;
           start_on_new_slot_lock.unlock();
-          StartOnForward(seq,v);
+          StartOnForward(seq, v);
         }
         start_on_new_slot_lock.unlock();
-        StartOnForward(seq,v);
+        StartOnForward(seq, v);
         return;
       }
 
       if (majority_count <= num_servers / 2 && !is_decided_prep) {
         std::unique_lock<std::mutex> slot_lock(slot->mu_);
-        std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(std::rand() % 1000));
         slot_lock.unlock();
       }
     }
@@ -564,15 +624,6 @@ private:
     return Status::OK;
   }
 
-  int getPortNumber(const std::string &address) {
-    size_t colon_pos = address.find(':');
-    if (colon_pos == std::string::npos) {
-      throw std::invalid_argument("Invalid address format.");
-    }
-
-    return std::stoi(address.substr(colon_pos + 1));
-  }
-
   void SendHeartbeats() {
     mu.lock();
     if (view % group_size != me) {
@@ -685,7 +736,6 @@ private:
 
   //   return false;
   // }
-
   void Election(int my_view, int offset) {
     while (true) {
       int majority_count = 0;
@@ -701,18 +751,18 @@ private:
 
         if (pair.first != server_address) {
           Status status = pair.second->Elect(&context, request, &response);
-          
+
           if (status.ok()) {
             if (response.status() == "Reject") {
-                reject_count++;
-                if (response.view() > highest_view) {
-                    highest_view = response.view();
-                }
+              reject_count++;
+              if (response.view() > highest_view) {
+                highest_view = response.view();
+              }
             } else if (response.status() == "OK") {
-                majority_count++;
-                if (response.highest_seq() > max_highest_accepted_seq) {
-                    max_highest_accepted_seq = response.highest_seq();
-                }
+              majority_count++;
+              if (response.highest_seq() > max_highest_accepted_seq) {
+                max_highest_accepted_seq = response.highest_seq();
+              }
             }
           }
         }
@@ -720,34 +770,34 @@ private:
 
       mu.lock();
       if (reject_count > 0) {
-          if (highest_view > view && my_view + offset < highest_view) {
-              view = highest_view;
-              leader_dead = false;
-              missed_heartbeats = 0;
-          }
-          mu.unlock();
-          return;
+        if (highest_view > view && my_view + offset < highest_view) {
+          view = highest_view;
+          leader_dead = false;
+          missed_heartbeats = 0;
+        }
+        mu.unlock();
+        return;
       }
 
       if (majority_count + 1 > paxos_stubs_map.size() / 2) {
-          if (highest_view <= my_view + offset && view < my_view + offset) {
-              leader_dead = false;
-              view = my_view + offset;
-              missed_heartbeats = 0;
-              if (max_highest_accepted_seq > highest_accepted_seq) {
-                  highest_accepted_seq = max_highest_accepted_seq;
-              }
-              mu.unlock();
-              return; // Election succeeded
-          } else {
-              if (highest_view > view) {
-                  view = highest_view;
-                  leader_dead = false;
-                  missed_heartbeats = 0;
-              }
-              mu.unlock();
-              return; // Election failed
+        if (highest_view <= my_view + offset && view < my_view + offset) {
+          leader_dead = false;
+          view = my_view + offset;
+          missed_heartbeats = 0;
+          if (max_highest_accepted_seq > highest_accepted_seq) {
+            highest_accepted_seq = max_highest_accepted_seq;
           }
+          mu.unlock();
+          return; // Election succeeded
+        } else {
+          if (highest_view > view) {
+            view = highest_view;
+            leader_dead = false;
+            missed_heartbeats = 0;
+          }
+          mu.unlock();
+          return; // Election failed
+        }
       }
 
       mu.unlock();
