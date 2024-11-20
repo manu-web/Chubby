@@ -265,6 +265,34 @@ private:
     return Status::OK;
   }
 
+  Status Learn(ServerContext *context, const DecideRequest *request,
+                DecideResponse *response) override {
+
+      mu.lock();
+      if(request->seq() < lowest_slot){
+        mu.unlock();
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                          "This slot has been garbage collected");
+      }
+
+      response->set_latest_done(done[me]);
+      PaxosSlot *slot = addSlots(request->seq());
+
+      if(request->seq() > highest_slot){
+        highest_slot = request->seq();
+      }
+
+      mu.unlock();
+      std::unique_lock<std::mutex> slot_lock(slot->mu_);
+
+      if(slot->status != DECIDED){
+        slot->status = DECIDED;
+        slot->value = request->value();
+      }
+
+      return Status::OK;
+  }
+
   Status ForwardLeader(ServerContext *context,
                        const ForwardLeaderRequest *request,
                        ForwardLeaderResponse *response) override {
@@ -513,6 +541,32 @@ private:
     }
 
     // TODO : Call learn here
+    std::vector<std::thread> threads;
+    for (const auto &pair : paxos_stubs_map) {
+        threads.emplace_back([&]() {
+          ClientContext context;
+          mu.lock();
+          DecideRequest decide_request;
+          DecideResponse decide_response;
+          decide_request.set_seq(seq);
+          decide_request.set_value(highest_va);
+          decide_request.set_sender_id(me);
+          decide_request.set_latest_done(done[me]);
+          mu.unlock();
+
+          Status status = pair.second->Learn(
+              &context, decide_request,
+              &decide_response);
+
+          if(status.ok()){
+            //TODO : Call forget method here
+          }
+        });
+    }
+
+    for (auto &thread : threads) {
+      thread.join();
+    }
   }
 
   // bool send_propose(std::string server_address, int log_index,

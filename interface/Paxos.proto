@@ -6,7 +6,7 @@ service Paxos {
     rpc Elect(ElectRequest) returns (ElectResponse);
     rpc Prepare(PrepareRequest) returns (PrepareResponse);
     rpc Accept(AcceptRequest) returns (AcceptResponse);
-    rpc Decide(DecideRequest) returns (DecideResponse);
+    rpc Learn(DecideRequest) returns (DecideResponse);
     rpc ForwardLeader(ForwardLeaderRequest) returns (ForwardLeaderResponse);
     rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
