@@ -36,6 +36,7 @@ using paxos::HeartbeatResponse;
 using paxos::Paxos;
 using paxos::PrepareRequest;
 using paxos::PrepareResponse;
+using paxos::StartRequest;
 
 enum ConsensusStatus { DECIDED, NOT_DECIDED, PENDING, FORGOTTEN };
 
@@ -96,7 +97,7 @@ private:
   RocksDBWrapper rocks_db_wrapper;
   std::map<std::string, std::unique_ptr<Paxos::Stub>> paxos_stubs_map;
 
-  int getPortNumber(const std::string &address);
+public:
   // void SendHeartbeats();
   // void DetectLeaderFailure();
 
@@ -115,7 +116,11 @@ private:
     this->last_port = 50051 + group_size - 1;
     this->server_address = server_address;
     this->self_port = getPortNumber(server_address);
-    this->me = self_port % group_size;
+    this->me = self_port % 50051;
+    this->num_servers = group_size;
+    for (int i = 0; i < group_size; i++) {
+      done.push_back(-1);
+    }
     InitializeServerStubs();
   }
 
@@ -137,11 +142,12 @@ private:
   }
 
   PaxosSlot *initSlot(int view) {
-    PaxosSlot *slot;
+    // PaxosSlot *slot = (PaxosSlot *)malloc(sizeof(PaxosSlot));
+    PaxosSlot *slot = new PaxosSlot();
     slot->status = PENDING;
-    slot->value = nullptr;
+    slot->value = "";
     slot->n_a = view;
-    slot->v_a = nullptr;
+    slot->v_a = "";
     slot->n_p = -1;
     slot->n = view;
     slot->highest_N = view;
@@ -149,7 +155,7 @@ private:
   }
 
   PaxosSlot *fillSlot(paxos::PaxosSlot rpc_slot) {
-    PaxosSlot *slot;
+    PaxosSlot *slot = new PaxosSlot();
     slot->n = rpc_slot.n();
     slot->n_p = rpc_slot.n_p();
     slot->n_a = rpc_slot.n_a();
@@ -162,15 +168,17 @@ private:
   }
 
   PaxosSlot *addSlots(int seq) {
-    if (slots.find(seq) != slots.end()) {
+    if (slots.find(seq) == slots.end()) {
+      std::cout << "Started init" << std::endl;
       slots[seq] = initSlot(view);
+      std::cout << "Completed init" << std::endl;
     }
     slots[seq]->n_a = view;
     return slots[seq];
   }
 
   Status Elect(ServerContext *context, const ElectRequest *request,
-                 ElectResponse *response) override {
+               ElectResponse *response) override {
     mu.lock();
     if (request->view() > view) {
       response->set_status("OK");
@@ -193,6 +201,8 @@ private:
 
   Status Prepare(ServerContext *context, const PrepareRequest *request,
                  PrepareResponse *response) override {
+    std::cout << "Received prepare request with seq, prop = " << request->seq()
+              << ", " << request->proposal_number() << std::endl;
     std::unique_lock<std::mutex> prepare_lock(mu);
     if (request->seq() < lowest_slot) {
       return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
@@ -231,6 +241,8 @@ private:
       return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                           "This slot has been garbage collected");
     }
+    std::cout << "Received Accept request with seq, value = " << request->seq()
+              << ", " << request->value() << std::endl;
     response->set_latest_done(done[me]);
     PaxosSlot *slot = addSlots(request->seq());
     if (request->view() > view) {
@@ -266,31 +278,32 @@ private:
   }
 
   Status Learn(ServerContext *context, const DecideRequest *request,
-                DecideResponse *response) override {
-
-      mu.lock();
-      if(request->seq() < lowest_slot){
-        mu.unlock();
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                          "This slot has been garbage collected");
-      }
-
-      response->set_latest_done(done[me]);
-      PaxosSlot *slot = addSlots(request->seq());
-
-      if(request->seq() > highest_slot){
-        highest_slot = request->seq();
-      }
-
+               DecideResponse *response) override {
+    std::cout << "Received Learn request with seq, value = " << request->seq()
+              << ", " << request->value() << std::endl;
+    mu.lock();
+    if (request->seq() < lowest_slot) {
       mu.unlock();
-      std::unique_lock<std::mutex> slot_lock(slot->mu_);
+      return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                          "This slot has been garbage collected");
+    }
 
-      if(slot->status != DECIDED){
-        slot->status = DECIDED;
-        slot->value = request->value();
-      }
+    response->set_latest_done(done[me]);
+    PaxosSlot *slot = addSlots(request->seq());
 
-      return Status::OK;
+    if (request->seq() > highest_slot) {
+      highest_slot = request->seq();
+    }
+
+    mu.unlock();
+    std::unique_lock<std::mutex> slot_lock(slot->mu_);
+
+    if (slot->status != DECIDED) {
+      slot->status = DECIDED;
+      slot->value = request->value();
+    }
+
+    return Status::OK;
   }
 
   Status ForwardLeader(ServerContext *context,
@@ -303,21 +316,34 @@ private:
     return Status::OK;
   }
 
+  Status Start(ServerContext *context, const StartRequest *request,
+               Empty *response) override {
+    std::cout << "received start" << std::endl;
+    Start(request->seq(), request->value());
+    return Status::OK;
+  }
+
   void Start(int seq, std::string v) {
     std::unique_lock<std::mutex> start_on_forward_lock(mu);
-
+    std::cout << "received start with seq, v = " << seq << ", " << v
+              << std::endl;
     if (seq < lowest_slot) {
+      std::cout << "Seq less than lowest_slot" << std::endl;
       return;
     }
 
     PaxosSlot *slot = addSlots(seq);
+    std::cout << "Completed add slots" << std::endl;
     if (slot->status != DECIDED && !is_dead) {
       if (view % num_servers == me) {
         if (!leader_dead) {
-          StartOnNewSlot(seq, v, slot, view);
+          std::thread(&PaxosImpl::StartOnNewSlot, this, seq, v, slot, view)
+              .detach();
+          // StartOnNewSlot(seq, v, slot, view);
         }
       } else {
-        StartOnForward(seq, v);
+        std::thread(&PaxosImpl::StartOnForward, this, seq, v).detach();
+        // StartOnForward(seq, v);
       }
     }
   }
@@ -356,13 +382,14 @@ private:
   }
 
   void StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view) {
-
-    std::unique_lock<std::mutex> slot_lock(slot->mu_);
+    std::cout << "Started StartOnNewSlot" << std::endl;
+    std::unique_lock<std::mutex> slot_lock(slot->mu);
+    // std::cout << "Received lock1" << std::endl;
     if (slot->status == DECIDED || is_dead) {
       return;
     }
     // prepare phase
-
+    std::cout << "Started Prepare Phase" << std::endl;
     int highest_na;
     std::string highest_va = v;
     std::atomic<bool> is_decided_prep = false;
@@ -374,65 +401,76 @@ private:
     highest_na = -1;
 
     std::unique_lock<std::mutex> start_on_new_slot_lock(mu);
+    // std::cout << "Received lock2" << std::endl;
     majority_count = 0;
     reject_count = 0;
+    std::cout << seq << ", " << highest_accepted_seq << std::endl;
     if (seq <= highest_accepted_seq) {
+      // std::cout << "Inside if" << std::endl;
       start_on_new_slot_lock.unlock();
       while (slot->n <= slot->highest_N) {
         slot->n += num_servers;
       }
-
+      std::cout << "trying to send prepare" << std::endl;
       std::vector<std::thread> threads;
       for (const auto &pair : paxos_stubs_map) {
-        threads.emplace_back([&]() {
-          ClientContext context;
-          PrepareRequest prepare_request;
-          PrepareResponse prepare_response;
-          prepare_request.set_seq(seq);
-          prepare_request.set_proposal_number(slot->n);
-          prepare_request.set_sender_id(me);
-          prepare_request.set_latest_done(done[me]);
-          Status status = pair.second->Prepare(&context, prepare_request,
-                                               &prepare_response);
-
-          if (status.ok()) {
-            // TODO : Call Forget RPC here
-            if (prepare_response.status() == "OK") {
-              majority_count++;
-              if (prepare_response.n_a() > highest_na) {
-                highest_na = prepare_response.n_a();
-                highest_va = prepare_response.v_a();
-                na_count_map[highest_na] += 1;
-              } else {
-                reject_count += 1;
-                if (slot->highest_N < prepare_response.highest_n()) {
-                  slot->highest_N = prepare_response.highest_n();
-                }
-              }
-              if (prepare_response.status() == "OK" &&
-                  prepare_response.value() != "") {
-                is_decided_prep = true;
-                decided_V = prepare_response.value();
-                return;
-              }
-              if (na_count_map[highest_na] > paxos_stubs_map.size() / 2) {
-                is_decided_prep = true;
-                decided_V = highest_va;
-                return;
+        // std::cout << "Inside loop for server " << pair.first << std::endl;
+        PrepareRequest prepare_request;
+        prepare_request.set_seq(seq);
+        prepare_request.set_proposal_number(slot->n);
+        prepare_request.set_sender_id(me);
+        prepare_request.set_latest_done(done[me]);
+        // threads.emplace_back(
+        //     [&](PrepareRequest prepare_request) {
+        ClientContext context;
+        PrepareResponse prepare_response;
+        std::cout << "trying send of prepare for pair.second " << pair.first
+                  << std::endl;
+        Status status =
+            pair.second->Prepare(&context, prepare_request, &prepare_response);
+        std::cout << "completed send of prepare for pair.second " << pair.first
+                  << std::endl;
+        if (status.ok()) {
+          // TODO : Call Forget RPC here
+          if (prepare_response.status() == "OK") {
+            std::cout << "Increment majority" << std::endl;
+            majority_count++;
+            if (prepare_response.n_a() > highest_na) {
+              highest_na = prepare_response.n_a();
+              highest_va = prepare_response.v_a();
+              na_count_map[highest_na] += 1;
+            } else {
+              reject_count += 1;
+              if (slot->highest_N < prepare_response.highest_n()) {
+                slot->highest_N = prepare_response.highest_n();
               }
             }
+            if (prepare_response.status() == "OK" &&
+                prepare_response.value() != "") {
+              is_decided_prep = true;
+              decided_V = prepare_response.value();
+              break;
+            }
+            if (na_count_map[highest_na] > paxos_stubs_map.size() / 2) {
+              is_decided_prep = true;
+              decided_V = highest_va;
+              break;
+            }
           }
-          if (reject_count > paxos_stubs_map.size() / 2 ||
-              majority_count > paxos_stubs_map.size() / 2 ||
-              na_count_map[highest_na] > paxos_stubs_map.size() / 2) {
-            return;
-          }
-        });
+        }
+        if (reject_count > paxos_stubs_map.size() / 2 ||
+            majority_count > paxos_stubs_map.size() / 2 ||
+            na_count_map[highest_na] > paxos_stubs_map.size() / 2) {
+          break;
+        }
+        // },
+        // prepare_request);
       }
-      for (auto &t : threads) {
-        t.join();
-      }
-
+      // for (auto &t : threads) {
+      //   t.join();
+      // }
+      std::cout << "Completed prepare phase threads" << std::endl;
+      std::cout << decided_V << ", " << highest_va << std::endl;
       if (highest_na > my_view) {
         start_on_new_slot_lock.lock();
         if (highest_na > view) {
@@ -457,10 +495,11 @@ private:
       start_on_new_slot_lock.unlock();
     }
 
-    if (highest_na == -1) {
+    if (highest_va == "") {
       highest_va = v;
     }
 
+    // accept phase
     std::atomic<bool> is_decided_acc = false;
     if (!is_decided_prep) {
       majority_count = 0;
@@ -543,25 +582,24 @@ private:
     // TODO : Call learn here
     std::vector<std::thread> threads;
     for (const auto &pair : paxos_stubs_map) {
-        threads.emplace_back([&]() {
-          ClientContext context;
-          mu.lock();
-          DecideRequest decide_request;
-          DecideResponse decide_response;
-          decide_request.set_seq(seq);
-          decide_request.set_value(highest_va);
-          decide_request.set_sender_id(me);
-          decide_request.set_latest_done(done[me]);
-          mu.unlock();
+      threads.emplace_back([&]() {
+        ClientContext context;
+        mu.lock();
+        DecideRequest decide_request;
+        DecideResponse decide_response;
+        decide_request.set_seq(seq);
+        decide_request.set_value(highest_va);
+        decide_request.set_sender_id(me);
+        decide_request.set_latest_done(done[me]);
+        mu.unlock();
 
-          Status status = pair.second->Learn(
-              &context, decide_request,
-              &decide_response);
+        Status status =
+            pair.second->Learn(&context, decide_request, &decide_response);
 
-          if(status.ok()){
-            //TODO : Call forget method here
-          }
-        });
+        if (status.ok()) {
+          // TODO : Call forget method here
+        }
+      });
     }
 
     for (auto &thread : threads) {
@@ -595,7 +633,8 @@ private:
   //   int retry_count = 0;
   //   paxos_accept_request.set_proposal_number(
   //       max_proposal_number_seen_so_far +
-  //       1); // TODO : Read from the db, maybe this machine just came up after
+  //       1); // TODO : Read from the db, maybe this machine just came up
+  //       after
   //           // failing
   //   paxos_accept_request.set_log_index(log_index);
   //   paxos_accept_request.set_value(value);
@@ -770,7 +809,8 @@ private:
   //   int retry_count = 0;
   //   paxos_accept_request.set_proposal_number(
   //       max_proposal_number_seen_so_far +
-  //       1); // TODO : Read from the db, maybe this machine just came up after
+  //       1); // TODO : Read from the db, maybe this machine just came up
+  //       after
   //           // failing
   //   paxos_accept_request.set_log_index(log_index);
   //   paxos_accept_request.set_value(value);
@@ -858,11 +898,46 @@ private:
       std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 100));
     }
   }
+
+  int getPortNumber(const std::string &address) {
+    size_t colon_pos = address.find(':');
+    if (colon_pos == std::string::npos) {
+      throw std::invalid_argument("Invalid address format.");
+    }
+
+    return std::stoi(address.substr(colon_pos + 1));
+  }
 };
 
-void RunServer() {}
+void RunServer(std::string &server_address) {
+  int port = std::stoi(server_address.substr(server_address.find(":") + 1,
+                                             server_address.size()));
+  PaxosImpl service(3, "db_" + std::to_string(port), 20 * 1024 * 1024,
+                    server_address);
 
-int main(int argc, char **argv) { return 0; }
+  ServerBuilder builder;
+  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+  builder.RegisterService(&service);
+  std::unique_ptr<Server> server(builder.BuildAndStart());
+
+  if (!server) {
+    std::cerr << "Failed to start server on " << server_address << std::endl;
+    exit(1);
+  }
+
+  std::cout << "Server started at " << server_address << std::endl;
+  server->Wait();
+}
+
+int main(int argc, char **argv) {
+  std::string server_address("127.0.0.1:50051");
+  if (argc > 1) {
+    server_address = argv[1];
+  }
+
+  RunServer(server_address);
+  return 0;
+}
 
 // Status Write(ServerContext *context, const WriteRequest *request,
 //              WriteResponse *response) override {
