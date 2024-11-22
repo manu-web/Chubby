@@ -46,5 +46,10 @@ int main() {
   request.set_seq(0);
   request.set_value("Hi");
   Status status = paxos_stub->Start(&context, request, &response);
+
+  ClientContext context2;
+  request.set_seq(1);
+  request.set_value("Hello");
+  status = paxos_stub->Start(&context2, request, &response);
   return 0;
 }

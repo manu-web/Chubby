@@ -337,12 +337,14 @@ public:
     if (slot->status != DECIDED && !is_dead) {
       if (view % num_servers == me) {
         if (!leader_dead) {
+          start_on_forward_lock.unlock();
           std::thread(&PaxosImpl::StartOnNewSlot, this, seq, v, slot, view)
-              .detach();
+              .join();
           // StartOnNewSlot(seq, v, slot, view);
         }
       } else {
-        std::thread(&PaxosImpl::StartOnForward, this, seq, v).detach();
+        start_on_forward_lock.unlock();
+        std::thread(&PaxosImpl::StartOnForward, this, seq, v).join();
         // StartOnForward(seq, v);
       }
     }
@@ -848,11 +850,13 @@ public:
 
           if (status.ok()) {
             if (response.status() == "Reject") {
+              std::cout << "No votes for me" << std::endl;
               reject_count++;
               if (response.view() > highest_view) {
                 highest_view = response.view();
               }
             } else if (response.status() == "OK") {
+              std::cout << "Server voted for me " << pair.first << std::endl;
               majority_count++;
               if (response.highest_seq() > max_highest_accepted_seq) {
                 max_highest_accepted_seq = response.highest_seq();
