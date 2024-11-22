@@ -9,16 +9,13 @@ include_directories(${CMAKE_SOURCE_DIR}/src/include)
 find_path(ROCKSDB_INCLUDE_DIR rocksdb/db.h REQUIRED)
 include_directories(${ROCKSDB_INCLUDE_DIR})
 
-# add_library(keyValueStoreLib keyValueStore.cpp)
-
-add_executable(paxos_server paxos_server.cpp paxos_rpc.cpp)
-    target_link_libraries(paxos_server
-	    # keyValueStoreLib
-        Paxos_proto_grpc
-        threadPoolLib
-        rocksDBlib
-        ${SQLite3_LIBRARIES}
-        ${_PROTOBUF_LIBPROTOBUF}
-        ${_REFLECTION}
-        ${_GRPC_GRPCPP}
-        ${ROCKSDB_LIBRARY}) 
+add_library(paxos_server paxos_server.cpp)
+target_link_libraries(paxos_server
+    Paxos_proto_grpc
+    threadPoolLib
+    rocksDBlib
+    ${SQLite3_LIBRARIES}
+    ${_PROTOBUF_LIBPROTOBUF}
+    ${_REFLECTION}
+    ${_GRPC_GRPCPP}
+    ${ROCKSDB_LIBRARY}) 

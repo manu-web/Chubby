@@ -15,6 +15,7 @@ add_executable(chubby_server server.cpp)
         Chubby_proto_grpc
         threadPoolLib
         rocksDBlib
+        paxos_server
         ${SQLite3_LIBRARIES}
         ${_PROTOBUF_LIBPROTOBUF}
         ${_REFLECTION}
