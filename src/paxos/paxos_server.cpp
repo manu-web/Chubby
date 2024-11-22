@@ -427,68 +427,11 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_v
       return;
     }
 
-<<<<<<< Updated upstream
-    PaxosSlot *slot = addSlots(seq);
-    std::cout << "Completed add slots" << std::endl;
-    if (slot->status != DECIDED && !is_dead) {
-      if (view % num_servers == me) {
-        if (!leader_dead) {
-          start_on_forward_lock.unlock();
-          std::thread(&PaxosImpl::StartOnNewSlot, this, seq, v, slot, view)
-              .join();
-          // StartOnNewSlot(seq, v, slot, view);
-        }
-      } else {
-        start_on_forward_lock.unlock();
-        std::thread(&PaxosImpl::StartOnForward, this, seq, v).join();
-        // StartOnForward(seq, v);
-      }
-    }
-  }
-
-  void StartOnForward(int seq, std::string v) {
-    std::unique_lock<std::mutex> start_on_forward_lock(mu);
-    PaxosSlot *slot = addSlots(seq);
-
-    if (slot->status != DECIDED) {
-      if (view % (num_servers) == me) {
-        if (!leader_dead) {
-          StartOnNewSlot(seq, v, slot, view);
-          return;
-        }
-      }
-    }
-
-    while (true) {
-      ForwardLeaderRequest forward_request;
-      std::string leader_address(
-          "127.0.0.1:" + std::to_string(first_port + view % num_servers));
-      std::cout << "Forwarding request to leader " << leader_address
-                << std::endl;
-      forward_request.set_seq(seq);
-      forward_request.set_value(v);
-      ForwardLeaderResponse forward_response;
-      ClientContext context;
-      start_on_forward_lock.unlock();
-      paxos_stubs_map[leader_address]->ForwardLeader(&context, forward_request,
-                                                     &forward_response);
-      std::cout << "Completed forwarding request to leader " << leader_address
-                << std::endl;
-      if (forward_response.status() != "OK") {
-        start_on_forward_lock.unlock();
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(std::rand() % 1000));
-        start_on_forward_lock.lock();
-      } else {
-        break;
-      }
-=======
     if (majority_count <= num_servers / 2 && !is_decided_prep) {
       std::unique_lock<std::mutex> slot_lock(slot->mu_);
       std::this_thread::sleep_for(
           std::chrono::milliseconds(std::rand() % 1000));
       slot_lock.unlock();
->>>>>>> Stashed changes
     }
   } else {
     start_on_new_slot_lock.unlock();
@@ -871,152 +814,6 @@ void PaxosImpl::Election(int my_view, int offset) {
       mu.unlock();
       return;
     }
-<<<<<<< Updated upstream
-    // std::cout << "Started Send heartbeat" << std::endl;
-    HeartbeatRequest request;
-    std::map<int, PaxosSlot *> request_slots;
-
-    for (const auto &pair : slots) {
-      if (pair.second->status == ConsensusStatus::DECIDED) {
-        auto decided_value = pair.second->value;
-        auto newSlot = initSlot(view);
-        newSlot->value = decided_value;
-        request_slots[pair.first] = newSlot;
-      }
-    }
-
-    for (const auto &pair : request_slots) {
-      paxos::PaxosSlot protobufSlot;
-      pair.second->ToProtobuf(&protobufSlot);
-      (*request.mutable_slots())[pair.first] = protobufSlot;
-    }
-    int curr_view = view;
-    mu.unlock();
-
-    if (curr_view % group_size == me) {
-      for (const auto &pair : paxos_stubs_map) {
-        ClientContext context;
-        HeartbeatResponse response;
-        mu.lock();
-        request.set_id(me);
-        request.set_view(curr_view);
-        for (const int val : done) {
-          request.add_done(val);
-        }
-        mu.unlock();
-        Status status = pair.second->Heartbeat(&context, request, &response);
-        if (status.ok() && pair.first != server_address) {
-          mu.lock();
-          std::map<int, PaxosSlot *> response_slots;
-
-          for (const auto &pair : response.slots()) {
-            const paxos::PaxosSlot &slot = pair.second;
-            response_slots[pair.first] = fillSlot(slot);
-          }
-
-          for (const auto &pair : response_slots) {
-            auto slot = addSlots(pair.first);
-            slot->mu_.lock();
-            if (slot->status != ConsensusStatus::DECIDED) {
-              slot->status = ConsensusStatus::DECIDED;
-              slot->value = pair.second->value;
-            }
-            slot->mu_.unlock();
-          }
-          mu.unlock();
-        }
-      }
-    }
-  }
-
-  void DetectLeaderFailure() {
-    std::lock_guard<std::mutex> lock(mu);
-    missed_heartbeats++;
-
-    if (missed_heartbeats > 3) {
-      int mod = view % group_size;
-
-      if (mod < me) {
-        std::thread(&PaxosImpl::Election, this, view, me - mod).detach();
-      } else if (mod > me) {
-        std::thread(&PaxosImpl::Election, this, view, me + group_size - mod)
-            .detach();
-      }
-
-      missed_heartbeats = 0;
-      leader_dead = true;
-    }
-  }
-
-  // bool InvokeAcceptRequests(std::string server_address, int log_index,
-  //                           std::string value) {
-
-  //   ClientContext context;
-  //   AcceptRequest paxos_accept_request;
-  //   AcceptResponse paxos_accept_response;
-
-  //   int retry_count = 0;
-  //   paxos_accept_request.set_proposal_number(
-  //       max_proposal_number_seen_so_far +
-  //       1); // TODO : Read from the db, maybe this machine just came up
-  //       after
-  //           // failing
-  //   paxos_accept_request.set_log_index(log_index);
-  //   paxos_accept_request.set_value(value);
-
-  //   while (retry_count < max_accept_retries) {
-  //     Status status = paxos_stubs_map[server_address]->Accept(
-  //         &context, paxos_accept_request, &paxos_accept_response);
-  //     if (status.ok()) {
-  //       if (paxos_accept_response.is_accepted()) {
-  //         return true;
-  //       } else {
-  //         break;
-  //       }
-  //     }
-  //     retry_count++;
-  //   }
-
-  //   return false;
-  // }
-  void Election(int my_view, int offset) {
-    while (true) {
-      int majority_count = 0;
-      int reject_count = 0;
-      int64_t highest_view = -1;
-      int max_highest_accepted_seq = -1;
-
-      for (const auto &pair : paxos_stubs_map) {
-        ClientContext context;
-        ElectRequest request;
-        ElectResponse response;
-        request.set_view(my_view + offset);
-
-        if (pair.first != server_address) {
-          Status status = pair.second->Elect(&context, request, &response);
-
-          if (status.ok()) {
-            if (response.status() == "Reject") {
-              std::cout << "No votes for me" << std::endl;
-              reject_count++;
-              if (response.view() > highest_view) {
-                highest_view = response.view();
-              }
-            } else if (response.status() == "OK") {
-              std::cout << "Server voted for me " << pair.first << std::endl;
-              majority_count++;
-              if (response.highest_seq() > max_highest_accepted_seq) {
-                max_highest_accepted_seq = response.highest_seq();
-              }
-            }
-          }
-        }
-      }
-
-      mu.lock();
-      if (reject_count > 0) {
-        if (highest_view > view && my_view + offset < highest_view) {
-=======
 
     if (majority_count + 1 > paxos_stubs_map.size() / 2) {
       if (highest_view <= my_view + offset && view < my_view + offset) {
@@ -1030,7 +827,6 @@ void PaxosImpl::Election(int my_view, int offset) {
         return; // Election succeeded
       } else {
         if (highest_view > view) {
->>>>>>> Stashed changes
           view = highest_view;
           leader_dead = false;
           missed_heartbeats = 0;
@@ -1043,46 +839,6 @@ void PaxosImpl::Election(int my_view, int offset) {
     mu.unlock();
     std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 100));
   }
-<<<<<<< Updated upstream
-};
-
-void RunServer(std::string &server_address) {
-  int port = std::stoi(server_address.substr(server_address.find(":") + 1,
-                                             server_address.size()));
-  PaxosImpl service(3, "db_" + std::to_string(port), 20 * 1024 * 1024,
-                    server_address);
-
-  ServerBuilder builder;
-  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-  builder.RegisterService(&service);
-  std::unique_ptr<Server> server(builder.BuildAndStart());
-
-  if (!server) {
-    std::cerr << "Failed to start server on " << server_address << std::endl;
-    exit(1);
-  }
-
-  std::cout << "Server started at " << server_address << std::endl;
-
-  std::thread([&service]() {
-    std::this_thread::sleep_for(std::chrono::seconds(3));
-    while (true) {
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-      service.SendHeartbeats();
-    }
-  }).detach();
-
-  std::thread([&service]() {
-    std::this_thread::sleep_for(std::chrono::seconds(3));
-    while (true) {
-      service.DetectLeaderFailure();
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-  }).detach();
-
-  server->Wait();
-=======
->>>>>>> Stashed changes
 }
 
 int getPortNumber(const std::string &address) {
