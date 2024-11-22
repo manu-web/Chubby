@@ -363,23 +363,29 @@ public:
       }
     }
 
-    ClientContext context;
-    ForwardLeaderRequest forward_request;
-    ForwardLeaderResponse forward_response;
-
-    std::string leader_address("127.0.0.1:" +
-                               std::to_string(first_port + view % num_servers));
-
-    forward_request.set_seq(seq);
-    forward_request.set_value(v);
-    paxos_stubs_map[leader_address]->ForwardLeader(&context, forward_request,
-                                                   &forward_response);
-
-    if (forward_response.status() != "OK") {
-      mu.lock();
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(std::rand() % 1000));
-      mu.unlock();
+    while (true) {
+      ForwardLeaderRequest forward_request;
+      std::string leader_address(
+          "127.0.0.1:" + std::to_string(first_port + view % num_servers));
+      std::cout << "Forwarding request to leader " << leader_address
+                << std::endl;
+      forward_request.set_seq(seq);
+      forward_request.set_value(v);
+      ForwardLeaderResponse forward_response;
+      ClientContext context;
+      start_on_forward_lock.unlock();
+      paxos_stubs_map[leader_address]->ForwardLeader(&context, forward_request,
+                                                     &forward_response);
+      std::cout << "Completed forwarding request to leader " << leader_address
+                << std::endl;
+      if (forward_response.status() != "OK") {
+        start_on_forward_lock.unlock();
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(std::rand() % 1000));
+        start_on_forward_lock.lock();
+      } else {
+        break;
+      }
     }
   }
 
