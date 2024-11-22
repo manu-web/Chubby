@@ -28,6 +28,8 @@ using chubby::AcquireLockResponse;
 using chubby::TryAcquireLockRequest;
 using chubby::TryAcquireLockResponse;
 using chubby::LockingMode;
+using chubby::KeepAliveRequest;
+using chubby::KeepAliveResponse;
 
 class KeyLock {
     std::unordered_map<std::string, std::shared_ptr<std::mutex>> lock_map;
@@ -62,12 +64,45 @@ private:
   RocksDBWrapper chubby_db;
   KeyLock key_lock;
   std::set<std::string> client_session_map; //Tracks if a client currently has session with the Chubby master, need not persist, recovery through client 
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point> client_lease_map;
+  std::mutex lease_map_mutex;
+  std::condition_variable lease_cv;
+  const std::chrono::seconds lease_timeout = std::chrono::seconds(12);
 
   public:
   
   ChubbyImpl(std::string db_path,std::size_t cache_size) : 
     chubby_db(db_path,cache_size){
   
+  }
+
+  Status KeepAlive(ServerContext* context, const KeepAliveRequest* request, KeepAliveResponse* response) override {
+    std::string client_id = request->client_id();
+
+    {
+      std::unique_lock<std::mutex> lock(lease_map_mutex);
+
+      // Check if the client session exists
+      if (client_session_map.find(client_id) == client_session_map.end()) {
+          response->set_success(false);
+          response->set_error_message("No client session available");
+          return Status::OK;
+      }
+
+      // Block until lease timeout is about to expire
+      lease_cv.wait_until(lock, client_lease_map[client_id] - std::chrono::milliseconds(100), [this, &client_id]() {
+          return std::chrono::steady_clock::now() >= client_lease_map[client_id];
+      });
+
+      auto new_timeout = std::chrono::steady_clock::now() + lease_timeout;
+      client_lease_map[client_id] = new_timeout;
+    }
+
+    response->set_success(true);
+    response->set_lease_timeout(lease_timeout.count());
+    response->set_error_message("");
+
+    return Status::OK;
   }
 
   Status AcquireLock(ServerContext *context, const AcquireLockRequest *request, AcquireLockResponse *response) override {
