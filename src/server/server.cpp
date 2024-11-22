@@ -25,6 +25,8 @@ using grpc::Status;
 using chubby::Chubby;
 using chubby::AcquireLockRequest;
 using chubby::AcquireLockResponse;
+using chubby::ReleaseLockRequest;
+using chubby::ReleaseLockResponse;
 using chubby::TryAcquireLockRequest;
 using chubby::TryAcquireLockResponse;
 using chubby::LockingMode;
@@ -70,10 +72,19 @@ private:
   const std::chrono::seconds lease_timeout = std::chrono::seconds(12);
 
   public:
-  
+
   ChubbyImpl(std::string db_path,std::size_t cache_size) : 
     chubby_db(db_path,cache_size){
   
+  }
+
+  void Put(){
+    //Call start method 
+    //
+  }
+
+  void Get(){
+
   }
 
   Status KeepAlive(ServerContext* context, const KeepAliveRequest* request, KeepAliveResponse* response) override {
@@ -166,6 +177,35 @@ private:
   Status TryAcquireLock(ServerContext *context, const TryAcquireLockRequest *request, TryAcquireLockResponse *response) override {
 
     return Status::OK;
+  }
+
+  Status ReleaseLock(ServerContext *context, const ReleaseLockRequest *request, ReleaseLockResponse *response) override {
+  
+    key_lock.lock(request->path());
+
+    std::string value;
+    bool key_found = chubby_db.Get(request->path(),value);
+
+    if(key_found){
+      if(value == "FREE"){
+        response->set_success(false);
+        response->set_error_message("TRYING_TO_RELEASE_UNACQUIRED_LOCK");
+      }else if(value == "SHARED" || value == "EXCLUSIVE"){
+        response->set_success(true);
+        response->set_error_message("NO_ERROR");
+
+        std::string new_value = "FREE";
+        chubby_db.Put(request->path(),new_value,value);
+      }
+    }else{
+      response->set_success(false);
+      response->set_error_message("TRYING_TO_RELEASE_UNACQUIRED_LOCK");
+    }
+
+    key_lock.unlock(request->path());
+
+    return Status::OK;
+
   }
 
 };
