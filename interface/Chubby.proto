@@ -6,11 +6,18 @@ service Chubby {
     rpc AcquireLock(AcquireLockRequest) returns (AcquireLockResponse);
     rpc TryAcquireLock(TryAcquireLockRequest) returns (TryAcquireLockResponse);
     rpc ReleaseLock(ReleaseLockRequest) returns (ReleaseLockResponse);
-    rpc KeepAliveSession(KeepAliveSessionRequest) returns (KeepAliveSessionResponse);
+    rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
+}
+
+enum LockingMode {
+    SHARED = 0;
+    EXCLUSIVE = 1;
 }
 
 message AcquireLockRequest {
-    string path = 1;
+    string client_id = 1;
+    string path = 2;
+    LockingMode locking_mode = 3; 
 }
 
 message AcquireLockResponse {
@@ -36,11 +43,12 @@ message ReleaseLockResponse {
     string error_message = 2;
 }
 
-message KeepAliveSessionRequest {
-    uint64 extend_time = 1;
+message KeepAliveRequest {
+    string client_id = 1;
 }
 
-message KeepAliveSessionResponse {
-    bool success = 1;
-    string error_message = 2;
+message KeepAliveResponse {
+    bool success = 1;              
+    uint32 lease_timeout = 2;     
+    string error_message = 3; 
 }
