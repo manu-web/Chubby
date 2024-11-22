@@ -723,10 +723,8 @@ public:
       mu.unlock();
       return;
     }
-
+    // std::cout << "Started Send heartbeat" << std::endl;
     HeartbeatRequest request;
-    ClientContext context;
-    HeartbeatResponse response;
     std::map<int, PaxosSlot *> request_slots;
 
     for (const auto &pair : slots) {
@@ -748,6 +746,8 @@ public:
 
     if (curr_view % group_size == me) {
       for (const auto &pair : paxos_stubs_map) {
+        ClientContext context;
+        HeartbeatResponse response;
         mu.lock();
         request.set_id(me);
         request.set_view(curr_view);
@@ -926,6 +926,23 @@ void RunServer(std::string &server_address) {
   }
 
   std::cout << "Server started at " << server_address << std::endl;
+
+  std::thread([&service]() {
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      service.SendHeartbeats();
+    }
+  }).detach();
+
+  std::thread([&service]() {
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    while (true) {
+      service.DetectLeaderFailure();
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }).detach();
+
   server->Wait();
 }
 
