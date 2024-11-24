@@ -29,7 +29,6 @@ using chubby::ReleaseLockRequest;
 using chubby::ReleaseLockResponse;
 using chubby::TryAcquireLockRequest;
 using chubby::TryAcquireLockResponse;
-using chubby::LockingMode;
 using chubby::KeepAliveRequest;
 using chubby::KeepAliveResponse;
 
@@ -159,7 +158,7 @@ private:
 
     key_lock.lock(request->path()); //So that other key paths are not locked 
 
-    std::string request_locking_mode = LockingMode_Name(request->locking_mode());
+    std::string request_locking_mode = request->locking_mode();
 
     if(client_session_map.find(request->client_id()) == client_session_map.end()){ //If machine comes back after getting killed for some time, should this be persisted?
 
