@@ -94,18 +94,10 @@ private:
   std::map<int, PaxosSlot> log;
   ThreadPool accept_thread_pool; // Should be formed conditionally if the
                                  // current server is a master
-  RocksDBWrapper rocks_db_wrapper;
+  RocksDBWrapper paxos_db;
   std::map<std::string, std::unique_ptr<Paxos::Stub>> paxos_stubs_map;
 
 public:
-  // void SendHeartbeats();
-  // void DetectLeaderFailure();
-
-  // bool send_propose(std::string server_address, int log_index,
-  //                   std::string value);
-  //   bool InvokeAcceptRequests(std::string server_address, int log_index,
-  //                           std::string value);
-
   PaxosImpl(int group_size, std::string db_path, size_t cache_size,
             std::string server_address);
 
@@ -142,54 +134,6 @@ public:
 
   void StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view);
 
-  // bool send_propose(std::string server_address, int log_index,
-  //                   std::string value) {
-  //   if (view % group_size == self_index) { // if its a master
-  //     for (int port = first_port; port <= last_port; port++) {
-  //       std::string server_address =
-  //           std::string("127.0.0.1:") + std::to_string(port);
-  //       if (paxos_stubs_map.contains(server_address)) {
-  //         futures.emplace_back(
-  //             std::async(std::launch::async,
-  //             &PaxosImpl::InvokeAcceptRequests,
-  //                        this, server_address, log_index, value));
-  //       }
-  //     }
-  //   }
-  // }
-
-  // bool InvokeAcceptRequests(std::string server_address, int log_index,
-  //                           std::string value) {
-
-  //   ClientContext context;
-  //   PaxosAcceptRequest paxos_accept_request;
-  //   PaxosAcceptResponse paxos_accept_response;
-
-  //   int retry_count = 0;
-  //   paxos_accept_request.set_proposal_number(
-  //       max_proposal_number_seen_so_far +
-  //       1); // TODO : Read from the db, maybe this machine just came up
-  //       after
-  //           // failing
-  //   paxos_accept_request.set_log_index(log_index);
-  //   paxos_accept_request.set_value(value);
-
-  //   while (retry_count < max_accept_retries) {
-  //     Status status = paxos_stubs_map[server_address]->Accept(
-  //         &context, paxos_accept_request, &paxos_accept_response);
-  //     if (status.ok()) {
-  //       if (paxos_accept_response.is_accepted()) {
-  //         return true;
-  //       } else {
-  //         break;
-  //       }
-  //     }
-  //     retry_count++;
-  //   }
-
-  //   return false;
-  // }
-
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
                    HeartbeatResponse *response) override;
 
@@ -197,124 +141,7 @@ public:
 
   void DetectLeaderFailure();
 
-  // bool InvokeAcceptRequests(std::string server_address, int log_index,
-  //                           std::string value) {
-
-  //   ClientContext context;
-  //   AcceptRequest paxos_accept_request;
-  //   AcceptResponse paxos_accept_response;
-
-  //   int retry_count = 0;
-  //   paxos_accept_request.set_proposal_number(
-  //       max_proposal_number_seen_so_far +
-  //       1); // TODO : Read from the db, maybe this machine just came up
-  //       after
-  //           // failing
-  //   paxos_accept_request.set_log_index(log_index);
-  //   paxos_accept_request.set_value(value);
-
-  //   while (retry_count < max_accept_retries) {
-  //     Status status = paxos_stubs_map[server_address]->Accept(
-  //         &context, paxos_accept_request, &paxos_accept_response);
-  //     if (status.ok()) {
-  //       if (paxos_accept_response.is_accepted()) {
-  //         return true;
-  //       } else {
-  //         break;
-  //       }
-  //     }
-  //     retry_count++;
-  //   }
-
-  //   return false;
-  // }
   void Election(int my_view, int offset);
 
   int getPortNumber(const std::string &address);
-
 };
-
-// void RunServer(std::string &server_address) {
-//   int port = std::stoi(server_address.substr(server_address.find(":") + 1,
-//                                              server_address.size()));
-//   PaxosImpl service(3, "db_" + std::to_string(port), 20 * 1024 * 1024,
-//                     server_address);
-
-//   ServerBuilder builder;
-//   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-//   builder.RegisterService(&service);
-//   std::unique_ptr<Server> server(builder.BuildAndStart());
-
-//   if (!server) {
-//     std::cerr << "Failed to start server on " << server_address << std::endl;
-//     exit(1);
-//   }
-
-//   std::cout << "Server started at " << server_address << std::endl;
-//   server->Wait();
-// }
-
-// int main(int argc, char **argv) {
-//   std::string server_address("127.0.0.1:50051");
-//   if (argc > 1) {
-//     server_address = argv[1];
-//   }
-
-//   RunServer(server_address);
-//   return 0;
-// }
-
-// Status Write(ServerContext *context, const WriteRequest *request,
-//              WriteResponse *response) override {
-
-//   int log_index;
-//   {
-//     std::lock_guard<std::mutex> lock(log_mutex);
-//     log_index = this->highest_log_idx++;
-//   }
-
-//   if (log.find(log_index) == log.end()) {
-//     initSlot(log_index);
-//   }
-
-//   bool decided = false;
-//   std::string server_address = this->server_address;
-//   std::string value = request->key();
-
-//   accept_thread_pool.enqueue([this, server_address, log_index, value,
-//                               &decided] {
-//     std::vector<std::future<bool>> futures;
-//     int no_of_successful_accept_requests = 0;
-
-//     for (int p = first_port; p <= last_port; p++) {
-//       std::string server_address =
-//           std::string("127.0.0.1:") + std::to_string(p);
-//       if (paxos_stubs_map.contains(server_address)) {
-//         futures.emplace_back(
-//             std::async(std::launch::async,
-//             &PaxosImpl::InvokeAcceptRequests,
-//                        this, server_address, log_index, value));
-//       }
-//     }
-
-//     for (auto &future : futures) {
-//       if (future.get())
-//         ++no_of_successful_accept_requests;
-//     }
-
-//     if (no_of_successful_accept_requests >= (group_size + 1) / 2)
-//       decided = true;
-//   });
-
-//   if (decided)
-//     log[log_index].status = ConsensusStatus::DECIDED;
-
-//   // Have some commit logic here before responding to the client
-
-//   return Status::OK;
-// }
-
-// Status Read(ServerContext *context, const ReadRequest *request,
-// ReadResponse *response) override {
-
-// }

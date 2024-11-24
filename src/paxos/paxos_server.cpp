@@ -39,12 +39,13 @@ using paxos::PrepareRequest;
 using paxos::PrepareResponse;
 using paxos::StartRequest;
 
-PaxosImpl::PaxosImpl(int group_size, std::string db_path, size_t cache_size,
-          std::string server_address) // This is the rocksDB cache size
-    : accept_thread_pool(8), rocks_db_wrapper(db_path, cache_size) {
+PaxosImpl::PaxosImpl(
+    int group_size, std::string db_path, size_t cache_size,
+    std::string server_address) // This is the rocksDB cache size
+    : accept_thread_pool(8), paxos_db(db_path, cache_size) {
   this->group_size = group_size;
   this->highest_log_idx = 0; // Do this only when spawned first time.
-                              // Otherwise read it from database
+                             // Otherwise read it from database
   this->first_port = 50051;
   this->last_port = 50051 + group_size - 1;
   this->server_address = server_address;
@@ -83,7 +84,7 @@ void PaxosImpl::InitializeServerStubs() {
   }
 }
 
-PaxosSlot* PaxosImpl::initSlot(int view) {
+PaxosSlot *PaxosImpl::initSlot(int view) {
   // PaxosSlot *slot = (PaxosSlot *)malloc(sizeof(PaxosSlot));
   PaxosSlot *slot = new PaxosSlot();
   slot->status = PENDING;
@@ -96,7 +97,7 @@ PaxosSlot* PaxosImpl::initSlot(int view) {
   return slot;
 }
 
-PaxosSlot* PaxosImpl::fillSlot(paxos::PaxosSlot rpc_slot) {
+PaxosSlot *PaxosImpl::fillSlot(paxos::PaxosSlot rpc_slot) {
   PaxosSlot *slot = new PaxosSlot();
   slot->n = rpc_slot.n();
   slot->n_p = rpc_slot.n_p();
@@ -109,7 +110,7 @@ PaxosSlot* PaxosImpl::fillSlot(paxos::PaxosSlot rpc_slot) {
   return slot;
 }
 
-PaxosSlot* PaxosImpl::addSlots(int seq) {
+PaxosSlot *PaxosImpl::addSlots(int seq) {
   if (slots.find(seq) == slots.end()) {
     std::cout << "Started init" << std::endl;
     slots[seq] = initSlot(view);
@@ -120,7 +121,7 @@ PaxosSlot* PaxosImpl::addSlots(int seq) {
 }
 
 Status PaxosImpl::Elect(ServerContext *context, const ElectRequest *request,
-              ElectResponse *response) {
+                        ElectResponse *response) {
   mu.lock();
   if (request->view() > view) {
     response->set_status("OK");
@@ -142,7 +143,7 @@ Status PaxosImpl::Elect(ServerContext *context, const ElectRequest *request,
 }
 
 Status PaxosImpl::Prepare(ServerContext *context, const PrepareRequest *request,
-                PrepareResponse *response) {
+                          PrepareResponse *response) {
   std::cout << "Received prepare request with seq, prop = " << request->seq()
             << ", " << request->proposal_number() << std::endl;
   std::unique_lock<std::mutex> prepare_lock(mu);
@@ -176,7 +177,7 @@ Status PaxosImpl::Prepare(ServerContext *context, const PrepareRequest *request,
 }
 
 Status PaxosImpl::Accept(ServerContext *context, const AcceptRequest *request,
-              AcceptResponse *response) {
+                         AcceptResponse *response) {
 
   std::unique_lock<std::mutex> accept_lock(mu);
   if (request->seq() < lowest_slot) {
@@ -220,7 +221,7 @@ Status PaxosImpl::Accept(ServerContext *context, const AcceptRequest *request,
 }
 
 Status PaxosImpl::Learn(ServerContext *context, const DecideRequest *request,
-              DecideResponse *response) {
+                        DecideResponse *response) {
   std::cout << "Received Learn request with seq, value = " << request->seq()
             << ", " << request->value() << std::endl;
   mu.lock();
@@ -249,8 +250,8 @@ Status PaxosImpl::Learn(ServerContext *context, const DecideRequest *request,
 }
 
 Status PaxosImpl::ForwardLeader(ServerContext *context,
-                      const ForwardLeaderRequest *request,
-                      ForwardLeaderResponse *response) {
+                                const ForwardLeaderRequest *request,
+                                ForwardLeaderResponse *response) {
 
   Start(request->seq(), request->value());
   response->set_status("OK");
@@ -259,7 +260,7 @@ Status PaxosImpl::ForwardLeader(ServerContext *context,
 }
 
 Status PaxosImpl::Start(ServerContext *context, const StartRequest *request,
-              Empty *response) {
+                        Empty *response) {
   std::cout << "received start" << std::endl;
   Start(request->seq(), request->value());
   return Status::OK;
@@ -267,8 +268,7 @@ Status PaxosImpl::Start(ServerContext *context, const StartRequest *request,
 
 void PaxosImpl::Start(int seq, std::string v) {
   std::unique_lock<std::mutex> start_on_forward_lock(mu);
-  std::cout << "received start with seq, v = " << seq << ", " << v
-            << std::endl;
+  std::cout << "received start with seq, v = " << seq << ", " << v << std::endl;
   if (seq < lowest_slot) {
     std::cout << "Seq less than lowest_slot" << std::endl;
     return;
@@ -308,22 +308,22 @@ void PaxosImpl::StartOnForward(int seq, std::string v) {
   ForwardLeaderResponse forward_response;
 
   std::string leader_address("127.0.0.1:" +
-                              std::to_string(first_port + view % num_servers));
+                             std::to_string(first_port + view % num_servers));
 
   forward_request.set_seq(seq);
   forward_request.set_value(v);
   paxos_stubs_map[leader_address]->ForwardLeader(&context, forward_request,
-                                                  &forward_response);
+                                                 &forward_response);
 
   if (forward_response.status() != "OK") {
     mu.lock();
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(std::rand() % 1000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::rand() % 1000));
     mu.unlock();
   }
 }
 
-void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view) {
+void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
+                               int my_view) {
   std::cout << "Started StartOnNewSlot" << std::endl;
   std::unique_lock<std::mutex> slot_lock(slot->mu);
   // std::cout << "Received lock1" << std::endl;
@@ -461,7 +461,7 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_v
         Status status = pair.second->Accept(
             &context, accept_request,
             &accept_response); // Have to add some timeout to the grpc
-                                // request otherwise might be blocking
+                               // request otherwise might be blocking
 
         if (status.ok()) {
           // TODO : Call Forget RPC here
@@ -549,56 +549,9 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_v
   }
 }
 
-// bool send_propose(std::string server_address, int log_index,
-//                   std::string value) {
-//   if (view % group_size == self_index) { // if its a master
-//     for (int port = first_port; port <= last_port; port++) {
-//       std::string server_address =
-//           std::string("127.0.0.1:") + std::to_string(port);
-//       if (paxos_stubs_map.contains(server_address)) {
-//         futures.emplace_back(
-//             std::async(std::launch::async,
-//             &PaxosImpl::InvokeAcceptRequests,
-//                        this, server_address, log_index, value));
-//       }
-//     }
-//   }
-// }
-
-// bool InvokeAcceptRequests(std::string server_address, int log_index,
-//                           std::string value) {
-
-//   ClientContext context;
-//   PaxosAcceptRequest paxos_accept_request;
-//   PaxosAcceptResponse paxos_accept_response;
-
-//   int retry_count = 0;
-//   paxos_accept_request.set_proposal_number(
-//       max_proposal_number_seen_so_far +
-//       1); // TODO : Read from the db, maybe this machine just came up
-//       after
-//           // failing
-//   paxos_accept_request.set_log_index(log_index);
-//   paxos_accept_request.set_value(value);
-
-//   while (retry_count < max_accept_retries) {
-//     Status status = paxos_stubs_map[server_address]->Accept(
-//         &context, paxos_accept_request, &paxos_accept_response);
-//     if (status.ok()) {
-//       if (paxos_accept_response.is_accepted()) {
-//         return true;
-//       } else {
-//         break;
-//       }
-//     }
-//     retry_count++;
-//   }
-
-//   return false;
-// }
-
-Status PaxosImpl::Heartbeat(ServerContext *context, const HeartbeatRequest *request,
-                  HeartbeatResponse *response) {
+Status PaxosImpl::Heartbeat(ServerContext *context,
+                            const HeartbeatRequest *request,
+                            HeartbeatResponse *response) {
   std::lock_guard<std::mutex> lock(mu);
   if (me == request->id()) {
     missed_heartbeats = 0;
@@ -741,37 +694,6 @@ void PaxosImpl::DetectLeaderFailure() {
   }
 }
 
-// bool InvokeAcceptRequests(std::string server_address, int log_index,
-//                           std::string value) {
-
-//   ClientContext context;
-//   AcceptRequest paxos_accept_request;
-//   AcceptResponse paxos_accept_response;
-
-//   int retry_count = 0;
-//   paxos_accept_request.set_proposal_number(
-//       max_proposal_number_seen_so_far +
-//       1); // TODO : Read from the db, maybe this machine just came up
-//       after
-//           // failing
-//   paxos_accept_request.set_log_index(log_index);
-//   paxos_accept_request.set_value(value);
-
-//   while (retry_count < max_accept_retries) {
-//     Status status = paxos_stubs_map[server_address]->Accept(
-//         &context, paxos_accept_request, &paxos_accept_response);
-//     if (status.ok()) {
-//       if (paxos_accept_response.is_accepted()) {
-//         return true;
-//       } else {
-//         break;
-//       }
-//     }
-//     retry_count++;
-//   }
-
-//   return false;
-// }
 void PaxosImpl::Election(int my_view, int offset) {
   while (true) {
     int majority_count = 0;
@@ -857,8 +779,8 @@ int getPortNumber(const std::string &address) {
 //                     server_address);
 
 //   ServerBuilder builder;
-//   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-//   builder.RegisterService(&service);
+//   builder.AddListeningPort(server_address,
+//   grpc::InsecureServerCredentials()); builder.RegisterService(&service);
 //   std::unique_ptr<Server> server(builder.BuildAndStart());
 
 //   if (!server) {
