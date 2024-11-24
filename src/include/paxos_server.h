@@ -63,7 +63,7 @@ struct PaxosSlot {
 };
 
 class PaxosImpl final : public Paxos::Service {
-private:
+public:
   ////////////////////////////////////////////
   // Prepare stuff
   ////////////////////////////////////////////
@@ -97,7 +97,6 @@ private:
   RocksDBWrapper paxos_db;
   std::map<std::string, std::unique_ptr<Paxos::Stub>> paxos_stubs_map;
 
-public:
   PaxosImpl(int group_size, std::string db_path, size_t cache_size,
             std::string server_address);
 
