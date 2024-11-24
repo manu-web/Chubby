@@ -259,6 +259,30 @@ Status PaxosImpl::ForwardLeader(ServerContext *context,
   return Status::OK;
 }
 
+void PaxosImpl::Forget(int peer, int peerDone) {
+  std::unique_lock<std::mutex> forget_lock(mu);
+  if (peerDone > done[peer]) {
+    done[peer] = peerDone;
+  }
+  int mini = done[0];
+  for (int i = 0; i < done.size(); i++) {
+    mini = std::min(mini, done[i]);
+  }
+  int offset = mini - lowest_slot + 1;
+  if (offset > 0) {
+    lowest_slot += offset;
+  }
+  // Erase outdated slots
+  for (auto it = slots.begin(); it != slots.end();) {
+    if (it->first < lowest_slot) {
+      it = slots.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  forget_lock.unlock();
+}
+
 Status PaxosImpl::Start(ServerContext *context, const StartRequest *request,
                         Empty *response) {
   std::cout << "received start" << std::endl;
@@ -373,7 +397,9 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
       std::cout << "completed send of prepare for pair.second " << pair.first
                 << std::endl;
       if (status.ok()) {
-        // TODO : Call Forget RPC here
+        int port = getPortNumber(pair.first);
+        int i = port - first_port;
+        Forget(i, prepare_response.latest_done());
         if (prepare_response.status() == "OK") {
           std::cout << "Increment majority" << std::endl;
           majority_count++;
@@ -464,7 +490,9 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
                                // request otherwise might be blocking
 
         if (status.ok()) {
-          // TODO : Call Forget RPC here
+          int port = getPortNumber(pair.first);
+          int i = port - first_port;
+          Forget(i, accept_response.latest_done());
           if (accept_response.status() == "OK") {
             majority_count++;
           } else {
@@ -539,7 +567,9 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
           pair.second->Learn(&context, decide_request, &decide_response);
 
       if (status.ok()) {
-        // TODO : Call forget method here
+        int port = getPortNumber(pair.first);
+        int i = port - first_port;
+        Forget(i, decide_response.latest_done());
       }
     });
   }

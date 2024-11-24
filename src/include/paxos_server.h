@@ -134,6 +134,8 @@ public:
 
   void StartOnNewSlot(int seq, std::string v, PaxosSlot *slot, int my_view);
 
+  void Forget(int peer, int peerDone);
+
   Status Heartbeat(ServerContext *context, const HeartbeatRequest *request,
                    HeartbeatResponse *response) override;
 
