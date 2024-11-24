@@ -145,4 +145,7 @@ public:
   void Election(int my_view, int offset);
 
   int getPortNumber(const std::string &address);
+
+  void getKeyValue(const std::string &key_value, std::string &key,
+                   std::string &value);
 };

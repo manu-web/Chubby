@@ -244,6 +244,9 @@ Status PaxosImpl::Learn(ServerContext *context, const DecideRequest *request,
   if (slot->status != DECIDED) {
     slot->status = DECIDED;
     slot->value = request->value();
+    std::string key, value;
+    getKeyValue(request->value(), key, value);
+    paxos_db.Put(key, value, value);
   }
 
   return Status::OK;
@@ -793,11 +796,12 @@ void PaxosImpl::Election(int my_view, int offset) {
   }
 }
 
-int getPortNumber(const std::string &address) {
-  size_t colon_pos = address.find(':');
-  if (colon_pos == std::string::npos) {
-    throw std::invalid_argument("Invalid address format.");
+void PaxosImpl::getKeyValue(const std::string &key_value, std::string &key,
+                            std::string &value) {
+  size_t pos = key_value.find('#');
+  if (pos == std::string::npos) {
+    throw std::invalid_argument("Invalid key_value format.");
   }
-
-  return std::stoi(address.substr(colon_pos + 1));
+  key = key_value.substr(0, pos);
+  value = key_value.substr(pos + 1);
 }
