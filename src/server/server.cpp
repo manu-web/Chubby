@@ -73,7 +73,7 @@ private:
   std::map<std::string, std::unique_ptr<Chubby::Stub>> chubby_stubs_map;
   int first_port;
   int last_port;
-
+  std::atomic<int> slot_number;
 
   public:
 
@@ -84,12 +84,13 @@ private:
     InitializeServerStubs();
   }
 
-  void Put(){
-    //Call start method 
-    //
-  }
+  void Put(const std::string &path,std::string &locking_mode){
+    
+    std::string key_value_to_be_sent_to_paxos;
 
-  void Get(){
+    key_value_to_be_sent_to_paxos = path + "#" + locking_mode;
+
+    paxos_service->Start(slot_number,key_value_to_be_sent_to_paxos);
 
   }
 
@@ -157,6 +158,7 @@ private:
     }
 
     key_lock.lock(request->path()); //So that other key paths are not locked 
+    slot_number++;
 
     std::string request_locking_mode = request->locking_mode();
 
@@ -167,13 +169,13 @@ private:
 
     }else{
       std::string value;
-      bool key_found = chubby_db.Get(request->path(),value);
+      bool key_found = paxos_service->paxos_db.Get(request->path(),value);
 
       if(key_found){
         if(request_locking_mode == "SHARED"){
           if(value == "FREE"){
             //Need to add client_id also to the value?
-            chubby_db.Put(request->path(),request_locking_mode,value);
+            Put(request->path(),request_locking_mode);
             response->set_success(true);
             response->set_error_message("NO_ERROR");
           }else if(value == "SHARED"){
@@ -186,7 +188,7 @@ private:
           }
         }else if(request_locking_mode == "EXCLUSIVE"){
           if(value == "FREE"){
-            chubby_db.Put(request->path(),request_locking_mode,value);
+            Put(request->path(),request_locking_mode);
             response->set_success(true);
             response->set_error_message("NO_ERROR");
           }else if(value == "SHARED"){
@@ -199,8 +201,8 @@ private:
         }
       }else{
         //Need to add client_id also to the value?
-        std::string old_value;
-        chubby_db.Put(request->path(),request_locking_mode,old_value);
+        // std::string old_value;
+        Put(request->path(),request_locking_mode);
         response->set_success(true);
         response->set_error_message("NO_ERROR");
       }
@@ -236,7 +238,7 @@ private:
     key_lock.lock(request->path());
 
     std::string value;
-    bool key_found = chubby_db.Get(request->path(),value);
+    bool key_found = paxos_service->paxos_db.Get(request->path(),value);
 
     if(key_found){
       if(value == "FREE"){
@@ -247,7 +249,7 @@ private:
         response->set_error_message("NO_ERROR");
 
         std::string new_value = "FREE";
-        chubby_db.Put(request->path(),new_value,value);
+        Put(request->path(),new_value);
       }
     }else{
       response->set_success(false);
