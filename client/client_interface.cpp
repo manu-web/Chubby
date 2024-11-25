@@ -129,6 +129,12 @@ int ClientLib::chubby_lock(std::string &path, std::string &locking_mode) {
         leader_update_mutex.lock();
         current_leader = acquire_response.current_leader();
         leader_update_mutex.unlock();
+
+        if(acquire_response.success()){
+            std::cout << "CHUBBY UNLOCK : Lock acquired by client with id = " << client_id << std::endl; 
+        }else{
+            std::cout << "CHUBBY UNLOCK : Lock could not be acquired by client with id = " << client_id << "due to " << acquire_response.error_message() <<  std::endl; 
+        }
     }else if (status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED){
         //Now entered the jeopardy phase
         std::cout << "CHUBBY LOCK : Entered Grace Period" << std::endl;
@@ -156,6 +162,12 @@ int ClientLib::chubby_lock(std::string &path, std::string &locking_mode) {
                 leader_update_mutex.lock();
                 current_leader = acquire_response.current_leader();
                 leader_update_mutex.unlock();
+
+                if(acquire_response.success()){
+                    std::cout << "CHUBBY LOCK : Lock acquired by client with id = " << client_id << std::endl; 
+                }else{
+                    std::cout << "CHUBBY LOCK : Lock could not be acquired by client with id = " << client_id << "due to " << acquire_response.error_message() <<  std::endl; 
+                }
             }else{
                 std::cerr << "CHUBBY LOCK : Could not release lock even till grace period" << std::endl;
             }
@@ -195,10 +207,18 @@ int ClientLib::chubby_unlock(std::string &path) {
     Status status = chubby_map[chubby_cell_handling_request]->ReleaseLock(&context, release_request, &release_response);
 
     if(status.ok()){
+
         std::cout << "CHUBBY UNLOCK : Request went through, master is alive" << std::endl;
         leader_update_mutex.lock();
         current_leader = release_response.current_leader();
         leader_update_mutex.unlock();
+
+        if(release_response.success()){
+            std::cout << "CHUBBY UNLOCK : Lock released by client with id = " << client_id << std::endl; 
+        }else{
+            std::cout << "CHUBBY UNLOCK : Lock could not be released by client with id = " << client_id << "due to " << release_response.error_message() <<  std::endl; 
+        }
+
     }else if (status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED){
 
         std::cout << "CHUBBY UNLOCK : Entered Grace Period" << std::endl;
@@ -225,6 +245,11 @@ int ClientLib::chubby_unlock(std::string &path) {
                 leader_update_mutex.lock();
                 current_leader = release_response.current_leader();
                 leader_update_mutex.unlock();
+                if(release_response.success()){
+                    std::cout << "CHUBBY UNLOCK : Lock released by client with id = " << client_id << std::endl; 
+                }else{
+                    std::cout << "CHUBBY UNLOCK : Lock could not be released by client with id = " << client_id << "due to " << release_response.error_message() <<  std::endl; 
+                }
             }else if(status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED){
                 std::cerr << "CHUBBY UNLOCK : Could not release lock even till grace period" << std::endl;
             }
@@ -238,6 +263,27 @@ int ClientLib::chubby_unlock(std::string &path) {
   }
 
   return 0;
+}
+
+int ClientLib::send_keep_alive(){
+
+    std::string chubby_cell_handling_request;
+
+    ClientContext context;
+    KeepAliveRequest keep_alive_request;
+    KeepAliveResponse keep_alive_response;
+
+    chubby_cell_handling_request = chubby_cell_handling_request_finder();
+    keep_alive_request.set_client_id(std::to_string(this->client_id)); 
+
+    Status status = chubby_map[chubby_cell_handling_request]->KeepAlive(&context, keep_alive_request, &keep_alive_response);
+
+    if(status.ok() && keep_alive_response.success()){
+        client_lease_timeout = keep_alive_response.lease_timeout();
+        return 0;
+    }else{
+        return -1;
+    }
 }
 
 int main(int argc, char **argv) {
