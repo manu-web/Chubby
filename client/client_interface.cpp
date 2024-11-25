@@ -98,7 +98,7 @@ std::string ClientLib::chubby_cell_handling_request_finder(){
     return chubby_cell_handling_request;
 }
 
-int ClientLib::chubby_lock(std::string &path, std::string &locking_mode) {
+int ClientLib::chubby_lock(const std::string &path, const std::string &locking_mode) {
 
   std::string chubby_cell_handling_request;
   AcquireLockRequest acquire_request;
@@ -181,7 +181,7 @@ int ClientLib::chubby_lock(std::string &path, std::string &locking_mode) {
   return 0;
 }
 
-int ClientLib::chubby_unlock(std::string &path) {
+int ClientLib::chubby_unlock(const std::string &path) {
 
   std::string chubby_cell_handling_request;
   ReleaseLockRequest release_request;

@@ -51,9 +51,9 @@ class ClientLib{
 
     int chubby_shutdown();
 
-    int chubby_lock(std::string &path, std::string &locking_mode);
+    int chubby_lock(const std::string &path, const std::string &locking_mode);
 
-    int chubby_unlock(std::string &path);
+    int chubby_unlock(const std::string &path);
 
     int send_keep_alive();
 };
