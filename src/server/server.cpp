@@ -109,6 +109,10 @@ private:
     }
   }
 
+  Status Ping(ServerContext* context, const chubby::Empty* request, chubby::Empty* response) override {
+    return Status::OK;
+  }
+
   Status KeepAlive(ServerContext* context, const KeepAliveRequest* request, KeepAliveResponse* response) override {
     std::string client_id = request->client_id();
 
