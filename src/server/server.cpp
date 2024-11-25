@@ -62,7 +62,6 @@ public:
 class ChubbyImpl final : public Chubby::Service {
 private:
 
-  RocksDBWrapper chubby_db;
   KeyLock key_lock;
   PaxosImpl* paxos_service;
   std::set<std::string> client_session_map; //Tracks if a client currently has session with the Chubby master, need not persist, recovery through client 
@@ -77,8 +76,7 @@ private:
 
   public:
 
-  ChubbyImpl(std::string db_path,std::size_t cache_size, PaxosImpl* paxos) : 
-    chubby_db(db_path,cache_size){
+  ChubbyImpl(PaxosImpl* paxos) {
     this->paxos_service = paxos;
 
     InitializeServerStubs();
@@ -270,7 +268,7 @@ void RunServer(std::string &server_address) {
   PaxosImpl paxos_service(3, "db_" + std::to_string(host_port), 20 * 1024 * 1024,
                   server_address);
 
-  ChubbyImpl chubby_service("/chubby", 20 * 1024 * 1024, &paxos_service);
+  ChubbyImpl chubby_service(&paxos_service);
   ServerBuilder builder;
   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
   builder.RegisterService(&chubby_service);
