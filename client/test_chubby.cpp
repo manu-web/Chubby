@@ -22,8 +22,8 @@ int main(int argc, char *argv[]) {
   }
 
   // Do some Acquire and Release lock sequence here
-
-  client_lib.chubby_shutdown();
+  client_lib.set_client_id(123);
+  client_lib.send_keep_alive();
 
   int status = client_lib.chubby_lock("/usr/aditya/xyz", "SHARED");
   if (status != 0) {
@@ -47,8 +47,9 @@ int main(int argc, char *argv[]) {
 
   status = client_lib.chubby_lock("/usr/aditya/xyz", "EXCLUSIVE");
   if (status != 0) {
-    std::cout << "Failure 3!" << std::endl;
+    std::cout << "Failure 5!" << std::endl;
   }
 
+  client_lib.chubby_shutdown();
   return 0;
 }
