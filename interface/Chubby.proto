@@ -48,7 +48,7 @@ message KeepAliveRequest {
 
 message KeepAliveResponse {
     bool success = 1;              
-    uint32 lease_timeout = 2;     
+    uint64 lease_timeout = 2;     
     string error_message = 3; 
 }
 

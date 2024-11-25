@@ -244,9 +244,9 @@ Status PaxosImpl::Learn(ServerContext *context, const DecideRequest *request,
   if (slot->status != DECIDED) {
     slot->status = DECIDED;
     slot->value = request->value();
-    std::string key, value;
+    std::string key, value, old_value;
     getKeyValue(request->value(), key, value);
-    paxos_db.Put(key, value, value);
+    paxos_db.Put(key, value, old_value);
   }
 
   return Status::OK;
@@ -306,12 +306,14 @@ void PaxosImpl::Start(int seq, std::string v) {
   if (slot->status != DECIDED && !is_dead) {
     if (view % num_servers == me) {
       if (!leader_dead) {
+        start_on_forward_lock.unlock();
         std::thread(&PaxosImpl::StartOnNewSlot, this, seq, v, slot, view)
-            .detach();
+            .join();
         // StartOnNewSlot(seq, v, slot, view);
       }
     } else {
-      std::thread(&PaxosImpl::StartOnForward, this, seq, v).detach();
+      start_on_forward_lock.unlock();
+      std::thread(&PaxosImpl::StartOnForward, this, seq, v).join();
       // StartOnForward(seq, v);
     }
   }
@@ -402,7 +404,7 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
       if (status.ok()) {
         int port = getPortNumber(pair.first);
         int i = port - first_port;
-        Forget(i, prepare_response.latest_done());
+        // Forget(i, prepare_response.latest_done());
         if (prepare_response.status() == "OK") {
           std::cout << "Increment majority" << std::endl;
           majority_count++;
@@ -495,7 +497,7 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
         if (status.ok()) {
           int port = getPortNumber(pair.first);
           int i = port - first_port;
-          Forget(i, accept_response.latest_done());
+          // Forget(i, accept_response.latest_done());
           if (accept_response.status() == "OK") {
             majority_count++;
           } else {
@@ -572,7 +574,7 @@ void PaxosImpl::StartOnNewSlot(int seq, std::string v, PaxosSlot *slot,
       if (status.ok()) {
         int port = getPortNumber(pair.first);
         int i = port - first_port;
-        Forget(i, decide_response.latest_done());
+        // Forget(i, decide_response.latest_done());
       }
     });
   }
@@ -653,8 +655,6 @@ void PaxosImpl::SendHeartbeats() {
   }
 
   HeartbeatRequest request;
-  ClientContext context;
-  HeartbeatResponse response;
   std::map<int, PaxosSlot *> request_slots;
 
   for (const auto &pair : slots) {
@@ -683,6 +683,8 @@ void PaxosImpl::SendHeartbeats() {
         request.add_done(val);
       }
       mu.unlock();
+      ClientContext context;
+      HeartbeatResponse response;
       Status status = pair.second->Heartbeat(&context, request, &response);
       if (status.ok() && pair.first != server_address) {
         mu.lock();
