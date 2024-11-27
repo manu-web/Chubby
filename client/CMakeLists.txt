@@ -12,15 +12,3 @@ add_library(kv739 SHARED client_interface.cpp)
         ${_PROTOBUF_LIBPROTOBUF}
         ${_REFLECTION}
         ${_GRPC_GRPCPP})
-
-add_executable(test_chubby test_chubby.cpp)
-target_link_libraries(test_chubby
-    kv739)
-
-add_executable(test_paxos test_paxos.cpp)
-target_link_libraries(test_paxos
-    # keyValueStoreLib
-    Paxos_proto_grpc
-    ${_PROTOBUF_LIBPROTOBUF}
-    ${_REFLECTION}
-    ${_GRPC_GRPCPP}) 
