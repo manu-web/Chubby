@@ -56,6 +56,16 @@ int ClientLib::chubby_shutdown(void) {
   return 0;
 }
 
+int ClientLib::chubby_open() {
+  std::random_device entropy_source;
+  std::mt19937_64 generator(entropy_source());
+  std::uniform_int_distribution<int> client_id_distrib(0, INT_MAX);
+  set_client_id(client_id_distrib(generator));
+  return send_keep_alive();
+}
+
+int ClientLib::chubby_close() { return 0; }
+
 std::string ClientLib::chubby_cell_handling_request_finder() {
   return "127.0.0.1:50051";
   std::string chubby_cell_handling_request;
