@@ -63,25 +63,87 @@ class ChubbyImpl final : public Chubby::Service {
 private:
   KeyLock key_lock;
   PaxosImpl *paxos_service;
-  std::set<std::string>
-      client_session_map; // Tracks if a client currently has session with the
-                          // Chubby master, need not persist, recovery through
-                          // client
+  std::set<std::pair<std::string, std::string> >
+      client_lock_map;
   std::unordered_map<std::string, std::chrono::steady_clock::time_point>
       client_lease_map;
   std::mutex lease_map_mutex;
+  std::mutex lock_map_mutex;
   std::condition_variable lease_cv;
   const std::chrono::seconds lease_timeout = std::chrono::seconds(12);
   std::map<std::string, std::unique_ptr<Chubby::Stub>> chubby_stubs_map;
   int first_port;
   int last_port;
   std::atomic<int> slot_number;
+  std::atomic<bool> stop_lease_checker;
 
 public:
   ChubbyImpl(PaxosImpl *paxos) {
     this->paxos_service = paxos;
 
     InitializeServerStubs();
+    StartLeaseCheckerThread();
+  }
+
+  ~ChubbyImpl() {
+    stop_lease_checker = true;
+  }
+
+  void CheckAndExpireLeases() {
+    while (!stop_lease_checker) {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::vector<std::string> expired_clients;
+
+      {
+        std::unique_lock<std::mutex> lock(lease_map_mutex);
+        auto now = std::chrono::steady_clock::now();
+
+        for (const auto &entry : client_lease_map) {
+          if (entry.second <= now) {
+            expired_clients.push_back(entry.first);
+          }
+        }
+
+        for (const auto &client_id : expired_clients) {
+          client_lease_map.erase(client_id);
+        }
+      }
+
+      for (const auto &client_id : expired_clients) {
+        ReleaseLocksForClient(client_id);
+      }
+    }
+  }
+
+  void ReleaseLocksForClient(const std::string &client_id) {
+    std::vector<std::string> locked_keys;
+
+    {
+      std::unique_lock<std::mutex> lock(lease_map_mutex);
+      for (const auto &entry : client_lock_map) {
+        if (entry.second == client_id) {
+          locked_keys.push_back(entry.first);
+        }
+      }
+    }
+
+    for (const auto &key : locked_keys) {
+      key_lock.lock(key);
+
+      std::string value;
+      bool key_found = paxos_service->paxos_db.Get(key, value);
+
+      if (key_found && (value == "SHARED" || value == "EXCLUSIVE")) {
+        std::string new_value = "FREE";
+        Put(key, new_value);
+      }
+
+      key_lock.unlock(key);
+    }
+  }
+
+  void StartLeaseCheckerThread() {
+    std::thread([this]() { CheckAndExpireLeases(); }).detach();
   }
 
   void Put(const std::string &path, std::string &locking_mode) {
@@ -198,10 +260,16 @@ public:
           if (value == "FREE") {
             // Need to add client_id also to the value?
             Put(request->path(), request_locking_mode);
+
+            std::lock_guard<std::mutex> lock(lock_map_mutex);
+            client_lock_map.insert({request->path(), request->client_id()});
             response->set_success(true);
             response->set_error_message("NO_ERROR");
           } else if (value == "SHARED") {
             // If client id needs to be added then we need to put to chubby_db
+
+            std::lock_guard<std::mutex> lock(lock_map_mutex);
+            client_lock_map.insert({request->path(), request->client_id()});
             response->set_success(true);
             response->set_error_message("NO_ERROR");
           } else if (value == "EXCLUSIVE") {
@@ -211,6 +279,10 @@ public:
         } else if (request_locking_mode == "EXCLUSIVE") {
           if (value == "FREE") {
             Put(request->path(), request_locking_mode);
+
+            std::lock_guard<std::mutex> lock(lock_map_mutex);
+            client_lock_map.insert({request->path(), request->client_id()});
+
             response->set_success(true);
             response->set_error_message("NO_ERROR");
           } else if (value == "SHARED") {
@@ -225,6 +297,11 @@ public:
         // Need to add client_id also to the value?
         //  std::string old_value;
         Put(request->path(), request_locking_mode);
+
+
+        std::lock_guard<std::mutex> lock(lock_map_mutex);
+        client_lock_map.insert({request->path(), request->client_id()});
+
         response->set_success(true);
         response->set_error_message("NO_ERROR");
       }
@@ -278,6 +355,10 @@ public:
 
         std::string new_value = "FREE";
         Put(request->path(), new_value);
+
+
+        std::lock_guard<std::mutex> lock(lock_map_mutex);
+        client_lock_map.erase({request->path(), request->client_id()});
       }
     } else {
       response->set_success(false);
