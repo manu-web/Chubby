@@ -44,12 +44,14 @@ message ReleaseLockResponse {
 
 message KeepAliveRequest {
     string client_id = 1;
+    uint32 epoch_number = 2;
 }
 
 message KeepAliveResponse {
     bool success = 1;              
-    uint64 lease_timeout = 2;     
-    string error_message = 3; 
+    uint64 lease_timeout = 2;  
+    uint32 epoch_number = 3;   
+    string error_message = 4; 
 }
 
 message Empty {

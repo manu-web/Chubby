@@ -33,10 +33,12 @@ class ClientLib {
   std::unordered_set<std::string> chubby_cells;
   std::map<std::string, std::unique_ptr<chubby::Chubby::Stub>> chubby_map;
   std::string current_leader = "UNKNOWN";
-  uint32_t client_lease_timeout = 0;
-  uint32_t grace_period = std::chrono::seconds(45).count();
+  uint64_t client_lease_timeout = 0;
+  uint64_t grace_period = std::chrono::seconds(45).count();
   int connection_try_limit = 5;
   std::mutex leader_update_mutex;
+  std::mutex client_timeout_mutex;
+  int latest_epoch_number = 0;
   int client_id;
 
   std::string chubby_cell_handling_request_finder();
