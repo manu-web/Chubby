@@ -221,6 +221,7 @@ public:
     response->set_success(true);
     response->set_lease_timeout(new_timeout);
     response->set_error_message("");
+    response->set_epoch_number(paxos_service->view);
 
     return Status::OK;
   }
@@ -307,6 +308,11 @@ public:
       }
     }
 
+    std::string leader_address("127.0.0.1:" +
+                        std::to_string(paxos_service->first_port + paxos_service->view % paxos_service->num_servers));
+
+    response->set_current_leader(leader_address);
+
     key_lock.unlock(request->path());
 
     return Status::OK;
@@ -364,6 +370,11 @@ public:
       response->set_success(false);
       response->set_error_message("TRYING_TO_RELEASE_UNACQUIRED_LOCK");
     }
+
+    std::string leader_address("127.0.0.1:" +
+                    std::to_string(paxos_service->first_port + paxos_service->view % paxos_service->num_servers));
+
+    response->set_current_leader(leader_address);
 
     key_lock.unlock(request->path());
 
