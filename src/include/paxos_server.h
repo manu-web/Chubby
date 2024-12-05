@@ -77,7 +77,7 @@ public:
   int me;
   ////////////////////////////////////////////
 
-  bool leader_dead;
+  bool leader_dead = false;
   int group_size;
   int max_proposal_number_seen_so_far;
   int highest_log_idx;

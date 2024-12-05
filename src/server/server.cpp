@@ -70,7 +70,7 @@ private:
   std::mutex lease_map_mutex;
   std::mutex lock_map_mutex;
   std::condition_variable lease_cv;
-  const std::chrono::seconds lease_timeout = std::chrono::seconds(12);
+  const std::chrono::seconds lease_timeout = std::chrono::seconds(120);
   std::map<std::string, std::unique_ptr<Chubby::Stub>> chubby_stubs_map;
   int first_port;
   int last_port;
@@ -188,8 +188,11 @@ public:
           std::to_string(paxos_service->first_port +
                          paxos_service->view % paxos_service->num_servers));
       ClientContext c_context;
-      chubby_stubs_map[leader_address]->KeepAlive(&c_context, *request,
+      Status leader_retry_s = chubby_stubs_map[leader_address]->KeepAlive(&c_context, *request,
                                                   response);
+      if (!leader_retry_s.ok()) {
+        return grpc::Status(grpc::StatusCode::ABORTED, "");
+      }
     }
 
     {

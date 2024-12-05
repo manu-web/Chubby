@@ -1,5 +1,25 @@
 #include "client_interface.h"
 
+#include "Chubby.grpc.pb.h"
+#include "Chubby.pb.h"
+#include <grpcpp/grpcpp.h>
+
+using grpc::Channel;
+using grpc::ClientContext;
+using grpc::Status;
+
+using chubby::AcquireLockRequest;
+using chubby::AcquireLockResponse;
+using chubby::Chubby;
+using chubby::Empty;
+using chubby::KeepAliveRequest;
+using chubby::KeepAliveResponse;
+using chubby::ReleaseLockRequest;
+using chubby::ReleaseLockResponse;
+using chubby::TryAcquireLockRequest;
+using chubby::TryAcquireLockResponse;
+
+
 int ClientLib::chubby_init(char *config_file) {
 
   std::ifstream file(config_file);
@@ -61,6 +81,14 @@ int ClientLib::chubby_open() {
   std::mt19937_64 generator(entropy_source());
   std::uniform_int_distribution<int> client_id_distrib(0, INT_MAX);
   set_client_id(client_id_distrib(generator));
+
+  uint64_t current_time =
+    std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  
+  client_lease_timeout = current_time + 12;
+
   return send_keep_alive();
 }
 
@@ -142,6 +170,7 @@ int ClientLib::chubby_lock(const std::string &path,
     acquire_request.set_path(path);
     acquire_request.set_locking_mode(locking_mode);
 
+    std::cout<< "Current leader at client side : " << current_leader << std::endl;
     Status status = chubby_map[chubby_cell_handling_request]->AcquireLock(
         &context, acquire_request, &acquire_response);
 
@@ -154,12 +183,12 @@ int ClientLib::chubby_lock(const std::string &path,
 
       if (acquire_response.success()) {
         std::cout << "CHUBBY LOCK : Lock acquired by client with id = "
-                  << client_id << std::endl;
+                  << client_id << " with view number: " << acquire_response.current_leader()<< std::endl;
       } else {
         std::cout
             << "CHUBBY LOCK : Lock could not be acquired by client with id = "
             << client_id << " due to " << acquire_response.error_message()
-            << std::endl;
+            << acquire_response.current_leader()<< std::endl;
         return -1;
       }
     } else {
@@ -192,8 +221,8 @@ int ClientLib::chubby_unlock(const std::string &path) {
     chubby_cell_handling_request = current_leader;
 
     ClientContext context;
-    context.set_deadline(std::chrono::time_point<std::chrono::system_clock>(
-        std::chrono::milliseconds(client_lease_timeout)));
+    // context.set_deadline(std::chrono::time_point<std::chrono::system_clock>(
+    //     std::chrono::milliseconds(client_lease_timeout)));
     release_request.set_client_id(std::to_string(this->client_id));
     release_request.set_path(path);
 
@@ -245,13 +274,13 @@ int ClientLib::send_keep_alive() {
     uint64_t current_time = std::chrono::duration_cast<std::chrono::seconds>(
                                 std::chrono::steady_clock::now().time_since_epoch())
                                 .count();
-
+    
     while (current_time < client_lease_timeout) {
         keep_alive_request.set_client_id(std::to_string(this->client_id));
         keep_alive_request.set_epoch_number(this->latest_epoch_number);
 
         ClientContext context;
-        context.set_deadline(std::chrono::system_clock::time_point(std::chrono::seconds(client_lease_timeout)));
+        // context.set_deadline(std::chrono::system_clock::time_point(std::chrono::seconds(client_lease_timeout)));
 
         Status status = chubby_map[current_leader]->KeepAlive(
             &context, keep_alive_request, &keep_alive_response);
@@ -266,11 +295,9 @@ int ClientLib::send_keep_alive() {
                 client_lease_timeout = keep_alive_response.lease_timeout();
                 return 0;  
             }
-        } else if(status.error_code() == grpc::DEADLINE_EXCEEDED){
-            std::cout << "KEEP ALIVE : Client lease expired, entering jeopardy phase" << std::endl;
-            break;
-        }else{
+        } else{
             std::cout << "KEEP ALIVE : Error, retrying" << std::endl;
+            sleep(1);
         }
 
         current_time = std::chrono::duration_cast<std::chrono::seconds>(
@@ -278,52 +305,54 @@ int ClientLib::send_keep_alive() {
                            .count();
     }
 
-    current_time = std::chrono::duration_cast<std::chrono::seconds>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
+    // current_time = std::chrono::duration_cast<std::chrono::seconds>(
+    //                        std::chrono::steady_clock::now().time_since_epoch())
+    //                        .count();
 
-    while (current_time < client_lease_timeout + grace_period) {
+    // while (current_time < client_lease_timeout + grace_period) {
 
-        chubby_cell_handling_request = chubby_cell_handling_request_finder();
-        if (chubby_cell_handling_request.empty()) {
-            return -2;  
-        }
+    //     chubby_cell_handling_request = chubby_cell_handling_request_finder();
+    //     if (chubby_cell_handling_request.empty()) {
+    //         return -2;  
+    //     }
 
-        keep_alive_request.set_client_id(std::to_string(this->client_id));
-        keep_alive_request.set_epoch_number(this->latest_epoch_number);
+    //     keep_alive_request.set_client_id(std::to_string(this->client_id));
+    //     keep_alive_request.set_epoch_number(this->latest_epoch_number);
 
-        ClientContext context;
-        context.set_deadline(std::chrono::system_clock::time_point(std::chrono::seconds(client_lease_timeout)) + std::chrono::seconds(grace_period));
+    //     std::cout<<"Sending keep alive";
 
-        Status status = chubby_map[chubby_cell_handling_request]->KeepAlive(
-            &context, keep_alive_request, &keep_alive_response);
+    //     ClientContext context;
+    //     // context.set_deadline(std::chrono::system_clock::time_point(std::chrono::seconds(client_lease_timeout)) + std::chrono::seconds(grace_period));
 
-        if (status.ok() && keep_alive_response.success()) {
-            if (keep_alive_response.epoch_number() > this->latest_epoch_number) {
-                this->latest_epoch_number = keep_alive_response.epoch_number();
-                continue;  
-            }
+    //     Status status = chubby_map[chubby_cell_handling_request]->KeepAlive(
+    //         &context, keep_alive_request, &keep_alive_response);
 
-            client_timeout_mutex.lock();
-            client_lease_timeout = keep_alive_response.lease_timeout();
-            client_timeout_mutex.unlock();
+    //     if (status.ok() && keep_alive_response.success()) {
+    //         if (keep_alive_response.epoch_number() > this->latest_epoch_number) {
+    //             this->latest_epoch_number = keep_alive_response.epoch_number();
+    //             continue;  
+    //         }
 
-            leader_update_mutex.lock();
-            current_leader = chubby_cell_handling_request;
-            leader_update_mutex.unlock();
+    //         client_timeout_mutex.lock();
+    //         client_lease_timeout = keep_alive_response.lease_timeout();
+    //         client_timeout_mutex.unlock();
 
-            return 0;  
-        }else if(status.error_code() == grpc::DEADLINE_EXCEEDED){
-            std::cout << "KEEP ALIVE : Client lease expired, entering jeopardy phase" << std::endl;
-            break;
-        }else{
-            std::cout << "KEEP ALIVE : Error, retrying" << std::endl;
-        }
+    //         leader_update_mutex.lock();
+    //         current_leader = chubby_cell_handling_request;
+    //         leader_update_mutex.unlock();
 
-        current_time = std::chrono::duration_cast<std::chrono::seconds>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
-    }
+    //         return 0;  
+    //     }else if(status.error_code() == grpc::DEADLINE_EXCEEDED){
+    //         std::cout << "KEEP ALIVE : Client lease expired, entering jeopardy phase" << std::endl;
+    //         break;
+    //     }else{
+    //         std::cout << "KEEP ALIVE : Error, retrying" << std::endl;
+    //     }
+
+    //     current_time = std::chrono::duration_cast<std::chrono::seconds>(
+    //                        std::chrono::steady_clock::now().time_since_epoch())
+    //                        .count();
+    // }
 
     return -1;  
 }

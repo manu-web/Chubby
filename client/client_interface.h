@@ -30,11 +30,14 @@ using chubby::TryAcquireLockRequest;
 using chubby::TryAcquireLockResponse;
 
 class ClientLib {
+public:
   std::unordered_set<std::string> chubby_cells;
   std::map<std::string, std::unique_ptr<chubby::Chubby::Stub>> chubby_map;
-  std::string current_leader = "UNKNOWN";
+  std::string current_leader = "127.0.0.1:50051";
   uint64_t client_lease_timeout = 0;
   uint64_t grace_period = std::chrono::seconds(45).count();
+  uint64_t lease_timeout = std::chrono::seconds(12).count();
+
   int connection_try_limit = 5;
   std::mutex leader_update_mutex;
   std::mutex client_timeout_mutex;
@@ -44,7 +47,6 @@ class ClientLib {
   std::string chubby_cell_handling_request_finder();
   void set_client_id(int client_id) { this->client_id = client_id; };
 
-public:
   int chubby_init(char *config_file);
 
   int chubby_shutdown();
