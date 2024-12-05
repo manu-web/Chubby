@@ -87,7 +87,7 @@ int ClientLib::chubby_open() {
         std::chrono::steady_clock::now().time_since_epoch())
         .count();
   
-  client_lease_timeout = current_time + 12;
+  client_lease_timeout = current_time + lease_timeout;
 
   return send_keep_alive();
 }
@@ -150,6 +150,11 @@ std::string ClientLib::chubby_cell_handling_request_finder() {
 int ClientLib::chubby_lock(const std::string &path,
                            const std::string &locking_mode) {
 
+  if(!accept_requests){
+    std::cout << "Cannot accept lock requests, in jeopardy phase" << std::endl;
+    return -4;
+  }
+
   std::string chubby_cell_handling_request;
   AcquireLockRequest acquire_request;
   AcquireLockResponse acquire_response;
@@ -205,6 +210,11 @@ int ClientLib::chubby_lock(const std::string &path,
 }
 
 int ClientLib::chubby_unlock(const std::string &path) {
+
+  if(!accept_requests){
+    std::cout << "Cannot accept unlock requests, in jeopardy phase" << std::endl;
+    return -4;
+  }
 
   std::string chubby_cell_handling_request;
   ReleaseLockRequest release_request;
@@ -293,6 +303,7 @@ int ClientLib::send_keep_alive() {
                 }
 
                 client_lease_timeout = keep_alive_response.lease_timeout();
+                accept_requests = true;
                 return 0;  
             }
         } else{
@@ -305,54 +316,63 @@ int ClientLib::send_keep_alive() {
                            .count();
     }
 
-    // current_time = std::chrono::duration_cast<std::chrono::seconds>(
-    //                        std::chrono::steady_clock::now().time_since_epoch())
-    //                        .count();
+    current_time = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
 
-    // while (current_time < client_lease_timeout + grace_period) {
+    while (current_time < client_lease_timeout + grace_period) {
 
-    //     chubby_cell_handling_request = chubby_cell_handling_request_finder();
-    //     if (chubby_cell_handling_request.empty()) {
-    //         return -2;  
-    //     }
+        accept_requests = false;
 
-    //     keep_alive_request.set_client_id(std::to_string(this->client_id));
-    //     keep_alive_request.set_epoch_number(this->latest_epoch_number);
+        std::vector<std::string> server_ports(connection_try_limit);
+        auto gen = std::mt19937{std::random_device{}()};
+        std::ranges::sample(chubby_cells.begin(), chubby_cells.end(),
+                      server_ports.begin(), connection_try_limit, gen);
+        std::ranges::shuffle(server_ports, gen);
 
-    //     std::cout<<"Sending keep alive";
+        // chubby_cell_handling_request = chubby_cell_handling_request_finder();
+        chubby_cell_handling_request = server_ports[0];
 
-    //     ClientContext context;
-    //     // context.set_deadline(std::chrono::system_clock::time_point(std::chrono::seconds(client_lease_timeout)) + std::chrono::seconds(grace_period));
+        if (chubby_cell_handling_request.empty()) {
+            return -2;  
+        }
 
-    //     Status status = chubby_map[chubby_cell_handling_request]->KeepAlive(
-    //         &context, keep_alive_request, &keep_alive_response);
+        keep_alive_request.set_client_id(std::to_string(this->client_id));
+        keep_alive_request.set_epoch_number(this->latest_epoch_number);
 
-    //     if (status.ok() && keep_alive_response.success()) {
-    //         if (keep_alive_response.epoch_number() > this->latest_epoch_number) {
-    //             this->latest_epoch_number = keep_alive_response.epoch_number();
-    //             continue;  
-    //         }
+        std::cout<<"Sending keep alive";
 
-    //         client_timeout_mutex.lock();
-    //         client_lease_timeout = keep_alive_response.lease_timeout();
-    //         client_timeout_mutex.unlock();
+        ClientContext context;
 
-    //         leader_update_mutex.lock();
-    //         current_leader = chubby_cell_handling_request;
-    //         leader_update_mutex.unlock();
+        Status status = chubby_map[chubby_cell_handling_request]->KeepAlive(
+            &context, keep_alive_request, &keep_alive_response);
 
-    //         return 0;  
-    //     }else if(status.error_code() == grpc::DEADLINE_EXCEEDED){
-    //         std::cout << "KEEP ALIVE : Client lease expired, entering jeopardy phase" << std::endl;
-    //         break;
-    //     }else{
-    //         std::cout << "KEEP ALIVE : Error, retrying" << std::endl;
-    //     }
+        if (status.ok() && keep_alive_response.success()) {
+            if (keep_alive_response.epoch_number() > this->latest_epoch_number) {
+                this->latest_epoch_number = keep_alive_response.epoch_number();
+                continue;  
+            }
 
-    //     current_time = std::chrono::duration_cast<std::chrono::seconds>(
-    //                        std::chrono::steady_clock::now().time_since_epoch())
-    //                        .count();
-    // }
+            client_timeout_mutex.lock();
+            client_lease_timeout = keep_alive_response.lease_timeout();
+            client_timeout_mutex.unlock();
+
+            leader_update_mutex.lock();
+            current_leader = chubby_cell_handling_request;
+            leader_update_mutex.unlock();
+
+            accept_requests = true;
+
+            return 0;  
+        }else{
+            std::cout << "KEEP ALIVE : Error, retrying" << std::endl;
+            sleep(1);
+        }
+
+        current_time = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    }
 
     return -1;  
 }

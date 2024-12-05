@@ -35,8 +35,9 @@ public:
   std::map<std::string, std::unique_ptr<chubby::Chubby::Stub>> chubby_map;
   std::string current_leader = "127.0.0.1:50051";
   uint64_t client_lease_timeout = 0;
-  uint64_t grace_period = std::chrono::seconds(45).count();
-  uint64_t lease_timeout = std::chrono::seconds(12).count();
+  uint64_t grace_period = 45;
+  uint64_t lease_timeout = 12;
+  bool accept_requests = true;
 
   int connection_try_limit = 5;
   std::mutex leader_update_mutex;
