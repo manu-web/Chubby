@@ -63,14 +63,13 @@ class ChubbyImpl final : public Chubby::Service {
 private:
   KeyLock key_lock;
   PaxosImpl *paxos_service;
-  std::set<std::pair<std::string, std::string> >
-      client_lock_map;
+  std::set<std::pair<std::string, std::string>> client_lock_map;
   std::unordered_map<std::string, std::chrono::steady_clock::time_point>
       client_lease_map;
   std::mutex lease_map_mutex;
   std::mutex lock_map_mutex;
   std::condition_variable lease_cv;
-  const std::chrono::seconds lease_timeout = std::chrono::seconds(120);
+  const std::chrono::seconds lease_timeout = std::chrono::seconds(12);
   std::map<std::string, std::unique_ptr<Chubby::Stub>> chubby_stubs_map;
   int first_port;
   int last_port;
@@ -85,9 +84,7 @@ public:
     StartLeaseCheckerThread();
   }
 
-  ~ChubbyImpl() {
-    stop_lease_checker = true;
-  }
+  ~ChubbyImpl() { stop_lease_checker = true; }
 
   void CheckAndExpireLeases() {
     while (!stop_lease_checker) {
@@ -188,8 +185,8 @@ public:
           std::to_string(paxos_service->first_port +
                          paxos_service->view % paxos_service->num_servers));
       ClientContext c_context;
-      Status leader_retry_s = chubby_stubs_map[leader_address]->KeepAlive(&c_context, *request,
-                                                  response);
+      Status leader_retry_s = chubby_stubs_map[leader_address]->KeepAlive(
+          &c_context, *request, response);
       if (!leader_retry_s.ok()) {
         return grpc::Status(grpc::StatusCode::ABORTED, "");
       }
@@ -307,7 +304,6 @@ public:
         //  std::string old_value;
         Put(request->path(), request_locking_mode);
 
-
         std::lock_guard<std::mutex> lock(lock_map_mutex);
         client_lock_map.insert({request->path(), request->client_id()});
 
@@ -316,8 +312,10 @@ public:
       }
     }
 
-    std::string leader_address("127.0.0.1:" +
-                        std::to_string(paxos_service->first_port + paxos_service->view % paxos_service->num_servers));
+    std::string leader_address(
+        "127.0.0.1:" +
+        std::to_string(paxos_service->first_port +
+                       paxos_service->view % paxos_service->num_servers));
 
     response->set_current_leader(leader_address);
 
@@ -347,7 +345,7 @@ public:
     if (paxos_service->leader_election_happened) {
       return grpc::Status(grpc::StatusCode::ABORTED, "");
     }
-    
+
     if (paxos_service->leader_dead) {
       std::string leader_address(
           "127.0.0.1:" +
@@ -374,7 +372,6 @@ public:
         std::string new_value = "FREE";
         Put(request->path(), new_value);
 
-
         std::lock_guard<std::mutex> lock(lock_map_mutex);
         client_lock_map.erase({request->path(), request->client_id()});
       }
@@ -383,8 +380,10 @@ public:
       response->set_error_message("TRYING_TO_RELEASE_UNACQUIRED_LOCK");
     }
 
-    std::string leader_address("127.0.0.1:" +
-                    std::to_string(paxos_service->first_port + paxos_service->view % paxos_service->num_servers));
+    std::string leader_address(
+        "127.0.0.1:" +
+        std::to_string(paxos_service->first_port +
+                       paxos_service->view % paxos_service->num_servers));
 
     response->set_current_leader(leader_address);
 
@@ -394,11 +393,11 @@ public:
   }
 };
 
-void RunServer(std::string &server_address) {
+void RunServer(int group_size, std::string &server_address) {
   int host_port = std::stoi(server_address.substr(server_address.find(":") + 1,
                                                   server_address.size()));
 
-  PaxosImpl paxos_service(3, "db_" + std::to_string(host_port),
+  PaxosImpl paxos_service(group_size, "db_" + std::to_string(host_port),
                           20 * 1024 * 1024, server_address);
 
   ChubbyImpl chubby_service(&paxos_service);
@@ -436,10 +435,12 @@ void RunServer(std::string &server_address) {
 
 int main(int argc, char **argv) {
   std::string server_address("127.0.0.1:50051");
+  int group_size = 3;
   if (argc > 1) {
     server_address = argv[1];
+    group_size = std::atoi(argv[2]);
   }
 
-  RunServer(server_address);
+  RunServer(group_size, server_address);
   return 0;
 }
