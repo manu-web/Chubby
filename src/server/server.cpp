@@ -231,6 +231,11 @@ public:
 
   Status AcquireLock(ServerContext *context, const AcquireLockRequest *request,
                      AcquireLockResponse *response) override {
+
+    if (paxos_service->leader_election_happened) {
+      return grpc::Status(grpc::StatusCode::ABORTED, "");
+    }
+
     if (paxos_service->leader_dead) {
       std::string leader_address(
           "127.0.0.1:" +
@@ -339,6 +344,10 @@ public:
 
   Status ReleaseLock(ServerContext *context, const ReleaseLockRequest *request,
                      ReleaseLockResponse *response) override {
+    if (paxos_service->leader_election_happened) {
+      return grpc::Status(grpc::StatusCode::ABORTED, "");
+    }
+    
     if (paxos_service->leader_dead) {
       std::string leader_address(
           "127.0.0.1:" +

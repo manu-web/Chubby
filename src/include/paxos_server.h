@@ -89,6 +89,7 @@ public:
   int highest_accepted_seq;
   int num_servers;
   int is_dead;
+  bool leader_election_happened = false;
   std::string server_address;
   std::string master_address;
   std::map<int, PaxosSlot> log;

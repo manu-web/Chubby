@@ -725,19 +725,14 @@ void PaxosImpl::DetectLeaderFailure() {
     }
 
     missed_heartbeats = 0;
-
-    // Server should make sure it informs all other server about a recent leader 
-    // election and update a field persisted in DB. For all requests coming to a server,
-    // the server will check for a recent leader election using this field. If it determines
-    // so, it will inform the client to create its new session with the new leader and then
-    // continue with further requests.
-    //
-    // OR
-    //
-    // After a new leader election, the new leader should set a field here so that it can
-    // keep on rejection acquire and release requests for a while. This will allow the client
-    // to send a new keep alive request to create new session in the meanwhile.
     leader_dead = true;
+    leader_election_happened = true;
+
+    std::thread([this]() {
+      std::this_thread::sleep_for(std::chrono::seconds(40));
+      std::lock_guard<std::mutex> lock(mu);
+      leader_election_happened = false;
+    }).detach();
   }
 }
 
