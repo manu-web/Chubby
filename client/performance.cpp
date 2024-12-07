@@ -21,8 +21,6 @@ struct perf_metrics {
 static const std::string characters =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-ClientLib client_lib;
-
 std::string generate_random_string(size_t length, std::mt19937 &gen) {
   std::uniform_int_distribution<> distrib(0, characters.size() - 1);
   std::string random_string;
@@ -33,16 +31,19 @@ std::string generate_random_string(size_t length, std::mt19937 &gen) {
   return random_string;
 }
 
-void send_keep_alive() {
+std::vector<ClientLib *> clients;
+
+void send_keep_alive(ClientLib *client) {
   while (true) {
-    int response = client_lib.send_keep_alive();
+    int response = client->send_keep_alive();
     if (response != 0) {
       std::cerr << "Keep Alive failed" << std::endl;
     }
   }
 }
 
-void send_requests(perf_metrics *metrics, int num_requests) {
+void send_requests(perf_metrics *metrics, int num_requests,
+                   ClientLib *client_lib) {
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_int_distribution<> path_distrib(1, 1024);
@@ -50,7 +51,7 @@ void send_requests(perf_metrics *metrics, int num_requests) {
   for (int i = 0; i < num_requests; i++) {
     std::string lock_path = "tmp/" + std::to_string(path_distrib(gen));
     high_resolution_clock::time_point start_time = high_resolution_clock::now();
-    int response = client_lib.chubby_lock(lock_path, "SHARED");
+    int response = client_lib->chubby_lock(lock_path, "SHARED");
     high_resolution_clock::time_point end_time = high_resolution_clock::now();
 
     duration<long long, std::nano> duration_nano =
@@ -73,7 +74,7 @@ void run_performance_test(int num_requests, int num_clients) {
 
   for (int i = 0; i < num_clients; i++) {
     client_threads.push_back(
-        std::thread(send_requests, &metrics, num_requests));
+        std::thread(send_requests, &metrics, num_requests, clients[i]));
   }
 
   for (auto &t : client_threads) {
@@ -99,24 +100,32 @@ void run_performance_test(int num_requests, int num_clients) {
 int main(int argc, char **argv) {
   std::string config_file("3.config");
   int num_requests = 100000;
-  if (argc == 2) {
+  int num_clients = 8;
+  if (argc >= 2) {
     num_requests = std::atoi(argv[1]);
-  } else if (argc == 3) {
-    num_requests = std::atoi(argv[1]);
-    config_file = argv[2];
+  }
+  if (argc >= 3) {
+    num_clients = std::atoi(argv[2]);
+  }
+  if (argc >= 4) {
+    config_file = argv[3];
   }
 
-  if (client_lib.chubby_init(config_file.data()) != 0) {
-    std::cerr << "Failed to initialize client." << std::endl;
-    return -1;
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<> client_ids(1, 1024);
+
+  for (int i = 0; i < num_clients; i++) {
+    ClientLib *c = new ClientLib();
+    c->chubby_init(config_file.data());
+    c->set_client_id(client_ids(gen));
+    clients.push_back(c);
+    std::thread keep_alive(send_keep_alive, c);
+    keep_alive.detach();
   }
-  client_lib.set_client_id(123);
 
-  std::thread keep_alive(send_keep_alive);
-  keep_alive.detach();
+  sleep(12);
+  run_performance_test(num_requests, num_clients);
 
-  run_performance_test(num_requests, 100);
-
-  assert(client_lib.chubby_shutdown() == 0);
   return 0;
 }
