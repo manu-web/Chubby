@@ -15,6 +15,10 @@ add_library(kv739 SHARED client_interface.cpp)
 add_executable(test_chubby test_chubby.cpp)
 target_link_libraries(test_chubby
     kv739)
+
+add_executable(perf performance.cpp)
+target_link_libraries(perf
+        kv739)
 # add_executable(test_paxos test_paxos.cpp)
 # target_link_libraries(test_paxos
 #     # keyValueStoreLib
