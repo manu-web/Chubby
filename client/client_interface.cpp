@@ -196,6 +196,9 @@ int ClientLib::chubby_lock(const std::string &path,
             << acquire_response.current_leader()<< std::endl;
         return -1;
       }
+    } else if(status.error_code() == grpc::StatusCode::ABORTED){
+      std::cout << "CHUBBY LOCK : The master is in wait state since recently elected " << std::endl; 
+      return -5;
     } else {
       // Now entered the jeopardy phase
       std::cout << "CHUBBY LOCK : Lock could not be acquired by client with id = " << client_id << " as the master is dead or unresponse" << std::endl;
@@ -258,7 +261,11 @@ int ClientLib::chubby_unlock(const std::string &path) {
         return -1;
       }
 
-    } else if (status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
+    } else if(status.error_code() == grpc::StatusCode::ABORTED){
+      std::cout << "CHUBBY UNLOCK : The master is in wait state since recently elected " << std::endl; 
+      return -5;
+    }
+     else if (status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
         std::cout << "CHUBBY UNLOCK : Lock could not be released by client with id = "
             << client_id << "due to either master being dead or unresponsive"
             << std::endl;
@@ -286,6 +293,9 @@ int ClientLib::send_keep_alive() {
                                 .count();
     
     while (current_time < client_lease_timeout) {
+
+        std::cout << "Current time = " << current_time << std::endl;
+        std::cout << "Client_lease_timeout = " << client_lease_timeout << std::endl;
         keep_alive_request.set_client_id(std::to_string(this->client_id));
         keep_alive_request.set_epoch_number(this->latest_epoch_number);
 
@@ -321,6 +331,11 @@ int ClientLib::send_keep_alive() {
                            .count();
 
     while (current_time < client_lease_timeout + grace_period) {
+
+        auto grace_period_plus_client_lease_timeout = client_lease_timeout + grace_period;
+        std::cout << "In grace period" << std::endl;
+        std::cout << "Current time = " << current_time << std::endl;
+        std::cout << "Grace period + client_lease_timeout = " << grace_period_plus_client_lease_timeout << std::endl;
 
         accept_requests = false;
 
